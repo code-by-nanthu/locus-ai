@@ -75,13 +75,19 @@ export function App() {
         // Request completion with tools enabled
         const response = await client.chat.completions.create({
           model: selectedModel,
-          messages: localHistory.map(m => ({
-            role: m.role,
-            content: m.content,
-            name: m.name,
-            tool_call_id: m.tool_call_id,
-            tool_calls: m.tool_calls
-          })) as any,
+          messages: [
+            {
+              role: 'system',
+              content: 'You are a local AI CLI assistant. Your primary function is conversational.\n\nCRITICAL RULES:\n1. NEVER call `read_file` or `write_file` unless the user explicitly requests you to read, write, or create a file.\n2. If the user just says "hi", "hello", or asks a general question, you MUST CALL the `reply_to_user` tool to respond. Do not use the other tools for conversation.'
+            },
+            ...localHistory.map(m => ({
+              role: m.role,
+              content: m.content,
+              name: m.name,
+              tool_call_id: m.tool_call_id,
+              tool_calls: m.tool_calls
+            }))
+          ] as any,
           tools: toolDefinitions,
           tool_choice: 'auto',
         });
@@ -105,6 +111,22 @@ export function App() {
 
         // Check if the local model decided to execute a system command tool
         if (assistantMessage.tool_calls && assistantMessage.tool_calls.length > 0) {
+          
+          // --- Intercept reply_to_user ---
+          const isOnlyReply = assistantMessage.tool_calls.length === 1 && (assistantMessage.tool_calls[0] as any).function.name === 'reply_to_user';
+          if (isOnlyReply) {
+             const args = JSON.parse((assistantMessage.tool_calls[0] as any).function.arguments);
+             setCurrentStream(args.message);
+             localHistory.push({
+               role: 'assistant',
+               content: args.message
+             });
+             setHistory([...localHistory]);
+             keepRunningLoop = false;
+             continue;
+          }
+          // --------------------------------
+
           // Push the tool call request itself to history to satisfy LLM context trees
           localHistory.push({
             role: 'assistant',
