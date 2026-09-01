@@ -1,7 +1,7 @@
 {
-  "name": "local-ai-cli",
+  "name": "locus",
   "version": "1.0.0",
-  "description": "",
+  "description": "Locus — a local AI CLI agent",
   "type": "module",
   "bin": "./dist/index.js",
   "scripts": {

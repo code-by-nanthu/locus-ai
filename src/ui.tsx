@@ -30,9 +30,7 @@ function Logo() {
   return (
     <Box>
       <Text bold color="cyan">◆ </Text>
-      <Text bold color="white">local</Text>
-      <Text bold color="cyan">ai</Text>
-      <Text color="blackBright"> cli</Text>
+      <Text bold color="white">Locus</Text>
     </Box>
   );
 }
