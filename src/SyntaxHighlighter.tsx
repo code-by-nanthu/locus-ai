@@ -5,8 +5,15 @@ interface SyntaxHighlighterProps {
   text: string;
 }
 
+// Hard limit: don't tokenize lines longer than this — return as plain text
+const MAX_LINE_LENGTH = 300;
+
 // Tokenize a single line of code for syntax highlighting
 function tokenizeLine(line: string): React.ReactNode[] {
+  // Safety guard: very long lines skip tokenization to prevent regex OOM
+  if (line.length > MAX_LINE_LENGTH) {
+    return [<Text key={0} color="white">{line}</Text>];
+  }
   // Pattern order matters: comments > strings > keywords > numbers > identifiers
   const tokenPattern = /(\/\/.*$|\/\*[\s\S]*?\*\/|#.*$)|("""[\s\S]*?"""|'''[\s\S]*?'''|`[^`]*`|"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')|\b(const|let|var|function|return|import|from|export|default|class|extends|interface|type|if|else|switch|case|break|for|while|do|in|of|async|await|try|catch|finally|throw|new|this|super|typeof|instanceof|void|null|undefined|true|false|static|public|private|protected|readonly|abstract|enum|namespace|module|declare|require|yield|get|set|def|fn|impl|struct|trait|match|mod|use|pub|let|mut|ref|move|clone|self|Self|println|print|echo|puts)\b|\b(\d+\.?\d*(?:e[+-]?\d+)?(?:px|em|rem|%|vh|vw)?)\b|([A-Z][a-zA-Z0-9_]*)|([a-zA-Z_][a-zA-Z0-9_]*\s*(?=\()|)/g;
 
