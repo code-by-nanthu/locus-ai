@@ -101,7 +101,9 @@ function BigLogo() {
 }
 
 function Divider() {
-  return <Text dimColor>{'─'.repeat(56)}</Text>;
+  // Use full terminal width, minus 4 for the horizontal padding of the container
+  const width = process.stdout.columns ? Math.max(0, process.stdout.columns - 4) : 56;
+  return <Text dimColor>{'─'.repeat(width)}</Text>;
 }
 
 /** Unicode block-style progress bar for the setup wizard */
@@ -143,7 +145,7 @@ function ElapsedTimer({ running }: { running: boolean }) {
 
 // ─── Tool Entry ───────────────────────────────────────────────────────────────
 
-function ToolEntry({ name, content, rejected }: { name?: string; content: string | null; rejected?: boolean }) {
+const ToolEntry = React.memo(function ToolEntry({ name, content, rejected }: { name?: string; content: string | null; rejected?: boolean }) {
   let success = true;
   let detail = '';
 
@@ -194,11 +196,11 @@ function ToolEntry({ name, content, rejected }: { name?: string; content: string
       {detail ? <Text dimColor>  {detail}</Text> : null}
     </Box>
   );
-}
+});
 
 // ─── Message components ───────────────────────────────────────────────────────
 
-function UserMessage({ content, timestamp }: { content: string; timestamp?: string }) {
+const UserMessage = React.memo(function UserMessage({ content, timestamp }: { content: string; timestamp?: string }) {
   return (
     <Box flexDirection="column" marginBottom={1}>
       <Box>
@@ -210,9 +212,9 @@ function UserMessage({ content, timestamp }: { content: string; timestamp?: stri
       </Box>
     </Box>
   );
-}
+});
 
-function AgentMessage({
+const AgentMessage = React.memo(function AgentMessage({
   content,
   timestamp,
   streaming,
@@ -237,7 +239,7 @@ function AgentMessage({
       </Box>
     </Box>
   );
-}
+});
 
 // ─── Empty / Welcome state ────────────────────────────────────────────────────
 
@@ -437,6 +439,7 @@ export function App() {
   useEffect(() => {
     if (step !== 'CHAT' || welcomeSuggestions.length > 0 || history.length > 0) return;
 
+    const suggestionController = new AbortController();
     let cancelled = false;
     setWelcomeLoading(true);
 
@@ -455,7 +458,7 @@ export function App() {
             },
           ],
           stream: false,
-        } as any);
+        } as any, { signal: suggestionController.signal });
 
         if (cancelled) return;
 
@@ -479,7 +482,10 @@ export function App() {
       }
     })();
 
-    return () => { cancelled = true; };
+    return () => { 
+      cancelled = true; 
+      suggestionController.abort();
+    };
   }, [step]);
 
   // ── Hotkeys ───────────────────────────────────────────────────────────────
@@ -523,6 +529,9 @@ export function App() {
         }
         return;
       }
+    } else if (loading || pendingApproval) {
+      // Explicitly swallow conversational keyboard input when the runner is processing
+      if (!pendingApproval && !key.ctrl && input !== 'c') return;
     }
 
     // When an approval gate is active, Y/N are captured exclusively
@@ -575,13 +584,17 @@ export function App() {
   // This helper detects that pattern and normalises it into a real tool call.
   function parsePseudoToolCall(text: string): { name: string; args: Record<string, any> } | null {
     const trimmed = text.trim();
-    // Only attempt if text looks like a JSON object (starts with {)
-    if (!trimmed.startsWith('{')) return null;
+    if (!trimmed.includes('{')) return null;
     try {
-      // Strip markdown fences in case the model wraps it
-      const jsonStr = trimmed.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
+      // Robust extraction: isolate everything between the first and last brace
+      const startIdx = trimmed.indexOf('{');
+      const endIdx = trimmed.lastIndexOf('}');
+      if (startIdx === -1 || endIdx === -1) return null;
+      
+      const jsonStr = trimmed.substring(startIdx, endIdx + 1);
       const obj = JSON.parse(jsonStr);
-      if (typeof obj.name !== 'string') return null;
+      
+      if (!obj.name) return null;
 
       // Normalise the args key — models use 'parameters', 'arguments', 'input', or 'args'
       const raw = obj.parameters ?? obj.arguments ?? obj.input ?? obj.args ?? {};
@@ -600,6 +613,7 @@ export function App() {
 
   // ── Agent loop ────────────────────────────────────────────────────────────
   const handleSubmitChat = async () => {
+    // CRITICAL: Must check loading state immediately on entry to short-circuit race conditions
     if (!query.trim() || loading) return;
 
     const userInput = query;
@@ -640,7 +654,11 @@ export function App() {
             {
               role: 'system',
               content:
-                'You are a helpful local AI CLI assistant.\n\nRULES:\n1. NEVER call any tools unless the user explicitly asks to read/write/run something.\n2. For all conversation and questions, respond in plain text without using tools.',
+                'You are a helpful local AI CLI assistant.\n\n' +
+                'RULES:\n' +
+                '1. ONLY use the explicitly provided tools: read_file, write_file, run_command, search_workspace. NEVER invent or hallucinate new tools.\n' +
+                '2. If the user asks you to "write a function" or "write code", output the code directly in markdown format. DO NOT use tools for this.\n' +
+                '3. ONLY use tools when interacting with the user\'s local filesystem or terminal.',
             },
             ...localHistory.map(m => ({
               role: m.role,
@@ -701,9 +719,11 @@ export function App() {
 
         // ── Pseudo-tool-call intercept ──────────────────────────────────────
         // If the model printed JSON instead of using proper tool_calls, handle it.
+        let isPseudo = false;
         if (finalContent && toolCalls.length === 0) {
           const pseudo = parsePseudoToolCall(finalContent);
           if (pseudo) {
+            isPseudo = true;
             // Don't add the raw JSON to history — treat it as a silent tool call
             setCurrentStream('');
 
@@ -713,14 +733,6 @@ export function App() {
               function: { name: pseudo.name, arguments: JSON.stringify(pseudo.args) },
             };
             toolCalls = [fakeCall];
-
-            // Push assistant turn without the raw JSON text
-            localHistory.push({
-              role: 'assistant',
-              content: null,
-              tool_calls: toolCalls,
-            });
-            // Jump to tool execution below
           }
         }
         // ───────────────────────────────────────────────────────────────────
@@ -732,17 +744,27 @@ export function App() {
 
         if (toolCalls.length > 0) {
           toolCalls = toolCalls.filter(Boolean);
-          localHistory.push({ role: 'assistant', content: finalContent, tool_calls: toolCalls });
+          localHistory.push({ 
+            role: 'assistant', 
+            content: isPseudo ? null : finalContent, 
+            tool_calls: toolCalls 
+          });
 
           for (const call of toolCalls) {
             let name = call.function.name;
+            // Fallback string matching guards
             if (name.includes('search_workspace')) name = 'search_workspace';
-            if (name.includes('write_file'))       name = 'write_file';
-            if (name.includes('read_file'))        name = 'read_file';
-            if (name.includes('run_command'))      name = 'run_command';
-
-            const argsText = call.function.arguments || '{}';
-            const args = JSON.parse(argsText);
+            else if (name.includes('write_file'))  name = 'write_file';
+            else if (name.includes('read_file'))   name = 'read_file';
+            else if (name.includes('run_command')) name = 'run_command';
+            
+            // Safe argument parsing fallback
+            let args;
+            try {
+              args = JSON.parse(call.function.arguments || '{}');
+            } catch {
+              args = {}; // Stop JSON syntax errors from crashing the agent loop mid-run
+            }
 
             setAgentStatus(`${name.replace('_', ' ')}`);
 
@@ -877,7 +899,9 @@ export function App() {
             return <ToolEntry key={idx} name={msg.name} content={msg.content} rejected={msg.rejected} />;
           }
           // Skip tool-call wrapper messages with no text
-          if (msg.role === 'assistant' && !msg.content && msg.tool_calls?.length) return null;
+          if (msg.role === 'assistant' && (!msg.content || msg.content.trim() === '') && msg.tool_calls) {
+            return null;
+          }
           if (!msg.content) return null;
 
           if (msg.role === 'user') {
