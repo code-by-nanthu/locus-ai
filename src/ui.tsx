@@ -401,6 +401,11 @@ export function App() {
 
   const abortControllerRef = useRef<AbortController | null>(null);
 
+  // Shell-like input history
+  const [inputHistory, setInputHistory] = useState<string[]>([]);
+  const [historyIndex, setHistoryIndex] = useState(-1);
+  const [draftQuery, setDraftQuery] = useState('');
+
   // ── Security approval gateway ────────────────────────────────────────────
   // Tools that require explicit user approval before running
   const GUARDED_TOOLS = new Set(['write_file', 'run_command']);
@@ -491,6 +496,35 @@ export function App() {
       return;
     }
 
+    // Input history navigation (only when active in chat)
+    if (step === 'CHAT' && !loading && !pendingApproval) {
+      if (key.upArrow) {
+        if (inputHistory.length === 0) return;
+        let newIndex = historyIndex;
+        if (historyIndex === -1) {
+          setDraftQuery(query);
+          newIndex = inputHistory.length - 1;
+        } else if (historyIndex > 0) {
+          newIndex = historyIndex - 1;
+        }
+        setHistoryIndex(newIndex);
+        setQuery(inputHistory[newIndex]);
+        return;
+      }
+      if (key.downArrow) {
+        if (historyIndex === -1) return;
+        let newIndex = historyIndex + 1;
+        if (newIndex >= inputHistory.length) {
+          setHistoryIndex(-1);
+          setQuery(draftQuery);
+        } else {
+          setHistoryIndex(newIndex);
+          setQuery(inputHistory[newIndex]);
+        }
+        return;
+      }
+    }
+
     // When an approval gate is active, Y/N are captured exclusively
     if (pendingApproval) {
       const ch = input.toLowerCase();
@@ -570,6 +604,11 @@ export function App() {
 
     const userInput = query;
     const ts = now();
+
+    // Save input history for up/down arrow navigation
+    setInputHistory(prev => [...prev, userInput]);
+    setHistoryIndex(-1);
+    setDraftQuery('');
 
     let localHistory: Message[] = [
       ...history,
