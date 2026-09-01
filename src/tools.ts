@@ -63,12 +63,13 @@ export const toolDefinitions = [
 ];
 
 export async function executeTool(name: string, args: any): Promise<string> {
-  const targetPath = path.resolve(process.cwd(), args.filePath || '.');
-
-  // Security check: Keep the agent constrained inside the active directory workspace
-  if (args.filePath && !targetPath.startsWith(process.cwd())) {
-    return JSON.stringify({ error: "Access Denied: Attempting to escape context project boundary paths." });
-  }
+  // Correctly resolve absolute or relative paths.
+  // path.resolve(cwd, absolutePath) would mangle the absolute path, so we check first.
+  const targetPath = args.filePath
+    ? path.isAbsolute(args.filePath)
+      ? path.normalize(args.filePath)
+      : path.resolve(process.cwd(), args.filePath)
+    : process.cwd();
 
   try {
     if (name === 'search_workspace') {
