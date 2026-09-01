@@ -1,8 +1,22 @@
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import { execa } from 'execa';
+import { glob } from 'glob';
 
 export const toolDefinitions = [
+  {
+    type: 'function' as const,
+    function: {
+      name: 'search_workspace',
+      description: 'Recursively search and list the file/directory tree structure within the workspace project to find specific components or inspect paths.',
+      parameters: {
+        type: 'object',
+        properties: {
+          query: { type: 'string', description: 'Optional keyword or pattern filtering (e.g., "*.ts", "package.json")' }
+        }
+      }
+    }
+  },
   {
     type: 'function' as const,
     function: {
@@ -57,6 +71,16 @@ export async function executeTool(name: string, args: any): Promise<string> {
   }
 
   try {
+    if (name === 'search_workspace') {
+      const pattern = args.query ? `**/${args.query}*` : '**/*';
+      const matches = await glob(pattern, {
+        cwd: process.cwd(),
+        ignore: ['node_modules/**', '.git/**', 'dist/**'],
+        nodir: false
+      });
+      return JSON.stringify({ success: true, workspaceFiles: matches.slice(0, 100) }); // Cap at 100 for token limits
+    }
+
     if (name === 'read_file') {
       const data = await fs.readFile(targetPath, 'utf-8');
       return JSON.stringify({ success: true, content: data });

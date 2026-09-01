@@ -32,7 +32,24 @@ export function App() {
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   useInput((input, key) => {
+    // Graceful Exit
     if (key.ctrl && input === 'c') exit();
+
+    // Hotkey: Switch Provider (Ctrl+P)
+    if (key.ctrl && input === 'p') {
+      setErrorMsg(null);
+      setStep('SELECT_PROVIDER');
+    }
+
+    // Hotkey: Switch Model (Ctrl+N)
+    if (key.ctrl && input === 'n') {
+      if (models.length > 0) {
+        setErrorMsg(null);
+        setStep('SELECT_MODEL');
+      } else {
+        setErrorMsg("Cannot toggle models yet. Please fetch a provider stack profile first.");
+      }
+    }
   });
 
   const handleSelectProvider = async (item: { value: Provider }) => {
@@ -74,7 +91,7 @@ export function App() {
         setCurrentStream('');
         
         const hasToolsInHistory = localHistory.some(m => m.role === 'tool' || (m.tool_calls && m.tool_calls.length > 0));
-        const isFileCommand = /read|write|file|create|make|code|folder|directory|script|app|run|test|execute|command|install|npm|yarn|pnpm/i.test(query) || hasToolsInHistory;
+        const isFileCommand = /read|write|file|create|make|code|folder|directory|script|app|run|test|execute|command|install|npm|yarn|pnpm|search|find|workspace|scan/i.test(query) || hasToolsInHistory;
 
         const requestConfig: any = {
           model: selectedModel,
@@ -152,11 +169,16 @@ export function App() {
           });
 
           for (const call of toolCalls) {
-            const name = call.function.name;
+            let name = call.function.name;
+            if (name.includes('search_workspace')) name = 'search_workspace';
+            if (name.includes('write_file')) name = 'write_file';
+            if (name.includes('read_file')) name = 'read_file';
+            if (name.includes('run_command')) name = 'run_command';
+
             const argsText = call.function.arguments || '{}';
             const args = JSON.parse(argsText);
 
-            setAgentStatus(`💻 System Action Executing: ${name}(${argsText})`);
+            setAgentStatus(`Executing system pipeline: ${name}...`);
             
             // Run the actual file edit or look up locally
             const result = await executeTool(name, args);
@@ -171,7 +193,7 @@ export function App() {
           }
 
           setHistory([...localHistory]);
-          setAgentStatus("Reviewing action results...");
+          setAgentStatus("Synthesizing system results...");
           // Continue loop: Send the tool execution result back to the model
           continue; 
         }
@@ -188,93 +210,141 @@ export function App() {
     }
   };
 
+  // ----------------------------------------------------
+  // STEP 1: SELECT PROVIDER
+  // ----------------------------------------------------
   if (step === 'SELECT_PROVIDER') {
     return (
-      <Box flexDirection="column" padding={1}>
-        <Text bold color="magenta">⚙️ Select Local Backend Provider:</Text>
-        <Box marginTop={1} marginBottom={1}>
-          <SelectInput items={[{ label: '🦙 Ollama', value: 'ollama' as Provider }, { label: '🔬 LM Studio', value: 'lmstudio' as Provider }]} onSelect={handleSelectProvider} />
+      <Box flexDirection="column" paddingY={1} paddingX={2}>
+        <Box borderStyle="round" borderColor="blue" paddingX={1} marginBottom={1}>
+          <Text bold color="blue"> ✦ GEMINI CLI </Text>
         </Box>
-        {loading && <Text color="yellow"><Spinner type="dots" /> Pinging endpoints...</Text>}
+        <Text color="gray">Select local system runtime engine provider:</Text>
+        <Box marginTop={1} marginBottom={1}>
+          <SelectInput 
+            items={[
+              { label: '  🦙 Ollama Runtime Server', value: 'ollama' as Provider }, 
+              { label: '  🔬 LM Studio Engine Sandbox', value: 'lmstudio' as Provider }
+            ]} 
+            onSelect={handleSelectProvider} 
+          />
+        </Box>
+        {loading && <Text color="blue"><Spinner type="dots" /> Querying local configurations...</Text>}
         {errorMsg && <Text color="red">⚠️ {errorMsg}</Text>}
       </Box>
     );
   }
 
+  // ----------------------------------------------------
+  // STEP 2: SELECT MODEL
+  // ----------------------------------------------------
   if (step === 'SELECT_MODEL') {
     return (
-      <Box flexDirection="column" padding={1}>
-        <Text bold color="magenta">🧠 Select Agent Brain Weight Model:</Text>
+      <Box flexDirection="column" paddingY={1} paddingX={2}>
+        <Box borderStyle="round" borderColor="blue" paddingX={1} marginBottom={1}>
+          <Text bold color="blue"> ✦ GEMINI CLI </Text>
+        </Box>
+        <Text color="gray">Select the local neural model weight for execution:</Text>
         <Box marginTop={1}>
-          <SelectInput items={models.map((m) => ({ label: `📦 ${m}`, value: m }))} onSelect={handleSelectModel} />
+          <SelectInput items={models.map((m) => ({ label: `  📦 ${m}`, value: m }))} onSelect={handleSelectModel} />
         </Box>
       </Box>
     );
   }
 
+  // ----------------------------------------------------
+  // STEP 3: MODERN RE-DESIGNED CHAT AGENT WORKSPACE
+  // ----------------------------------------------------
   return (
-    <Box flexDirection="column" padding={1}>
-      <Box borderStyle="single" borderColor="dim" paddingX={1} marginBottom={1}>
-        <Text color="yellow" bold>{provider.toUpperCase()}</Text>
-        <Text dimColor> ── Agent Engine active with tool options: </Text>
-        <Text color="cyan" bold>{selectedModel}</Text>
+    <Box flexDirection="column" paddingX={2} paddingY={1}>
+      {/* PROFESSIONAL DYNAMIC STEERING HEADER HEADER */}
+      <Box borderStyle="round" borderColor="blue" justifyContent="space-between" paddingX={1} marginBottom={1}>
+        <Box>
+          <Text bold color="blue">✦ GEMINI CLI </Text>
+          <Text color="gray">v1.1.0</Text>
+        </Box>
+        <Box>
+          <Text color="gray">Engine: </Text>
+          <Text color="cyan" bold>{provider.toUpperCase()}</Text>
+          <Text color="gray"> ┃ Model: </Text>
+          <Text color="magenta" bold>{selectedModel}</Text>
+        </Box>
       </Box>
 
-      {/* Render Conversation Feed */}
-      {history.map((msg, idx) => {
-        if (msg.role === 'tool') {
+      {/* FOOTER HELPER SHORTCUT BAR */}
+      <Box borderStyle="classic" borderColor="dim" paddingX={1} marginBottom={1}>
+        <Text dimColor>Hotkeys: </Text>
+        <Text color="yellow" bold>Ctrl+P</Text>
+        <Text dimColor> Change Backend Provider ┃ </Text>
+        <Text color="yellow" bold>Ctrl+N</Text>
+        <Text dimColor> Switch Target Model</Text>
+      </Box>
+
+      {/* CONVERSATION AREA */}
+      <Box flexDirection="column" marginBottom={1}>
+        {history.map((msg, idx) => {
+          if (msg.role === 'tool') {
+            return (
+              <Box key={idx} paddingLeft={2} marginY={1}>
+                <Text color="blue">├─ </Text>
+                <Text color="gray" italic>Workspace pipeline tool update [{msg.name}] complete.</Text>
+              </Box>
+            );
+          }
+          if (!msg.content) return null;
+          
+          const isUser = msg.role === 'user';
           return (
-            <Box key={idx} paddingLeft={2} marginBottom={1}>
-              <Text color="gray" italic>⚙️ Tool output [{msg.name}]: {msg.content?.substring(0, 100)}...</Text>
+            <Box key={idx} flexDirection="column" marginY={1}>
+              <Box marginBottom={0}>
+                <Text bold color={isUser ? 'blue' : 'green'}>
+                  {isUser ? '👤 You' : '✦ Gemini Agent'}
+                </Text>
+              </Box>
+              <Box paddingLeft={2}>
+                <SyntaxHighlighter text={msg.content} />
+              </Box>
             </Box>
           );
-        }
-        if (!msg.content && (!msg.tool_calls || msg.tool_calls.length === 0)) return null;
-        
-        return (
-          <Box key={idx} flexDirection="column" marginBottom={1}>
-            <Text bold color={msg.role === 'user' ? 'cyan' : 'green'}>
-              {msg.role === 'user' ? '👤 You:' : '🤖 Agent:'}
-            </Text>
-            {msg.content && <SyntaxHighlighter text={msg.content} />}
-            {msg.tool_calls && msg.tool_calls.length > 0 && (
-              <Box flexDirection="column" paddingLeft={2}>
-                 {msg.tool_calls.map((call, cidx) => (
-                    <Text key={cidx} color="magenta" italic>
-                      ⚡ Calling tool {call.function.name}({call.function.arguments})
-                    </Text>
-                 ))}
-              </Box>
-            )}
+        })}
+
+        {/* STREAMING CHUNK LAYER */}
+        {currentStream.length > 0 && (
+          <Box flexDirection="column" marginY={1}>
+            <Box>
+              <Text bold color="green">✦ Gemini Agent</Text>
+            </Box>
+            <Box paddingLeft={2}>
+              <SyntaxHighlighter text={currentStream} />
+            </Box>
           </Box>
-        );
-      })}
+        )}
+      </Box>
 
-      {currentStream.length > 0 && (
-        <Box flexDirection="column" marginBottom={1}>
-          <Text bold color="green">🤖 Agent:</Text>
-          <SyntaxHighlighter text={currentStream} />
-        </Box>
-      )}
-
-      {/* Real-time status tracker box showing tool workflows */}
+      {/* SYSTEM PIPELINE LOADING MESSAGES */}
       {loading && (
-        <Box marginBottom={1}>
-          <Text color="yellow">
-            <Spinner type="dots" /> {agentStatus || "Processing logic frames..."}
+        <Box marginBottom={1} paddingLeft={2}>
+          <Text color="cyan">
+            <Spinner type="dots" /> {agentStatus || "Processing matrix arrays..."}
           </Text>
         </Box>
       )}
 
       {errorMsg && (
-        <Box marginBottom={1}>
+        <Box borderStyle="single" borderColor="red" paddingX={1} marginBottom={1}>
           <Text color="red">⚠️ {errorMsg}</Text>
         </Box>
       )}
 
-      <Box borderStyle="round" borderColor="cyan" paddingLeft={1}>
-        <Text color="magenta">❯ </Text>
-        <TextInput value={query} onChange={setQuery} onSubmit={handleSubmitChat} placeholder="Ask agent to write/read code or analyze files..." />
+      {/* MODERN CHAT INPUT COMPONENT */}
+      <Box borderStyle="round" borderColor="gray" paddingLeft={1} marginTop={1}>
+        <Text color="blue">✦ </Text>
+        <TextInput 
+          value={query} 
+          onChange={setQuery} 
+          onSubmit={handleSubmitChat} 
+          placeholder="Ask Gemini to scan workspace files or hot-swap settings dynamically..." 
+        />
       </Box>
     </Box>
   );
