@@ -1,7 +1,7 @@
 import * as fs from 'fs/promises';
 import * as path from 'path';
+import { execa } from 'execa';
 
-// 1. Declare the structural tool blueprints for the OpenAI API format
 export const toolDefinitions = [
   {
     type: 'function' as const,
@@ -31,16 +31,29 @@ export const toolDefinitions = [
         required: ['filePath', 'content']
       }
     }
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'run_command',
+      description: 'Execute a native shell bash command on the project machine system environment (e.g., git, npm install, npm test, node script.js).',
+      parameters: {
+        type: 'object',
+        properties: {
+          command: { type: 'string', description: 'The complete shell command phrase to run' }
+        },
+        required: ['command']
+      }
+    }
   }
 ];
 
-// 2. Concrete local runner implementations
 export async function executeTool(name: string, args: any): Promise<string> {
-  const targetPath = path.resolve(process.cwd(), args.filePath);
+  const targetPath = path.resolve(process.cwd(), args.filePath || '.');
 
-  // Security boundary: Stop the LLM from escaping your project workspace directory
-  if (!targetPath.startsWith(process.cwd())) {
-    return JSON.stringify({ error: "Access Denied: Cannot modify directories outside the project root." });
+  // Security check: Keep the agent constrained inside the active directory workspace
+  if (args.filePath && !targetPath.startsWith(process.cwd())) {
+    return JSON.stringify({ error: "Access Denied: Attempting to escape context project boundary paths." });
   }
 
   try {
@@ -53,6 +66,16 @@ export async function executeTool(name: string, args: any): Promise<string> {
       await fs.mkdir(path.dirname(targetPath), { recursive: true });
       await fs.writeFile(targetPath, args.content, 'utf-8');
       return JSON.stringify({ success: true, message: `Successfully wrote file to ${args.filePath}` });
+    }
+
+    if (name === 'run_command') {
+      // Execute bash instruction asynchronously using execa
+      const { stdout, stderr } = await execa({ shell: true, reject: false })`${args.command}`;
+      return JSON.stringify({
+        success: true,
+        stdout: stdout?.trim() || '',
+        stderr: stderr?.trim() || ''
+      });
     }
 
     return JSON.stringify({ error: `Tool ${name} not found.` });

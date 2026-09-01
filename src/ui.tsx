@@ -5,6 +5,7 @@ import Spinner from 'ink-spinner';
 import SelectInput from 'ink-select-input';
 import { getLocalClient, fetchLocalModels, Provider } from './llm.js';
 import { toolDefinitions, executeTool } from './tools.js';
+import { SyntaxHighlighter } from './SyntaxHighlighter.js';
 
 interface Message {
   role: 'user' | 'assistant' | 'tool';
@@ -73,7 +74,7 @@ export function App() {
         setCurrentStream('');
         
         const hasToolsInHistory = localHistory.some(m => m.role === 'tool' || (m.tool_calls && m.tool_calls.length > 0));
-        const isFileCommand = /read|write|file|create|make|code|folder|directory|script|app/i.test(query) || hasToolsInHistory;
+        const isFileCommand = /read|write|file|create|make|code|folder|directory|script|app|run|test|execute|command|install|npm|yarn|pnpm/i.test(query) || hasToolsInHistory;
 
         const requestConfig: any = {
           model: selectedModel,
@@ -235,7 +236,7 @@ export function App() {
             <Text bold color={msg.role === 'user' ? 'cyan' : 'green'}>
               {msg.role === 'user' ? '👤 You:' : '🤖 Agent:'}
             </Text>
-            {msg.content && <Text>{msg.content}</Text>}
+            {msg.content && <SyntaxHighlighter text={msg.content} />}
             {msg.tool_calls && msg.tool_calls.length > 0 && (
               <Box flexDirection="column" paddingLeft={2}>
                  {msg.tool_calls.map((call, cidx) => (
@@ -252,7 +253,7 @@ export function App() {
       {currentStream.length > 0 && (
         <Box flexDirection="column" marginBottom={1}>
           <Text bold color="green">🤖 Agent:</Text>
-          <Text>{currentStream}</Text>
+          <SyntaxHighlighter text={currentStream} />
         </Box>
       )}
 
