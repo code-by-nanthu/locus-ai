@@ -72,13 +72,15 @@ export function App() {
       while (keepRunningLoop) {
         setCurrentStream('');
         
-        // Request completion with tools enabled
-        const response = await client.chat.completions.create({
+        const hasToolsInHistory = localHistory.some(m => m.role === 'tool' || (m.tool_calls && m.tool_calls.length > 0));
+        const isFileCommand = /read|write|file|create|make|code|folder|directory|script|app/i.test(query) || hasToolsInHistory;
+
+        const requestConfig: any = {
           model: selectedModel,
           messages: [
             {
               role: 'system',
-              content: 'You are a local AI CLI assistant. Your primary function is conversational.\n\nCRITICAL RULES:\n1. NEVER call `read_file` or `write_file` unless the user explicitly requests you to read, write, or create a file.\n2. If the user just says "hi", "hello", or asks a general question, you MUST CALL the `reply_to_user` tool to respond. Do not use the other tools for conversation.'
+              content: 'You are a local AI CLI assistant. Your primary function is conversational.\n\nCRITICAL RULES:\n1. NEVER call `read_file` or `write_file` unless the user explicitly requests you to read, write, or create a file.\n2. If the user just says "hi", "hello", or asks a general question, you MUST NOT use any tools. Just reply directly with a conversational message.'
             },
             ...localHistory.map(m => ({
               role: m.role,
@@ -87,58 +89,73 @@ export function App() {
               tool_call_id: m.tool_call_id,
               tool_calls: m.tool_calls
             }))
-          ] as any,
-          tools: toolDefinitions,
-          tool_choice: 'auto',
-        });
+          ],
+          stream: true,
+        };
 
-        const choice = response.choices[0];
-        const assistantMessage = choice?.message;
-
-        if (!assistantMessage) {
-          throw new Error("No message choice from the LLM provider.");
+        if (isFileCommand) {
+          requestConfig.tools = toolDefinitions;
+          requestConfig.tool_choice = 'auto';
         }
 
-        // If the model generates a normal text response
-        if (assistantMessage.content) {
-          setCurrentStream(assistantMessage.content);
+        // Request completion with streaming enabled
+        const response = await client.chat.completions.create(requestConfig);
+
+        let incomingBuffer = '';
+        let toolCalls: any[] = [];
+
+        for await (const chunk of response as any) {
+          const delta = chunk.choices?.[0]?.delta;
+          if (!delta) continue;
+
+          if (delta.content) {
+            incomingBuffer += delta.content;
+            setCurrentStream((prev) => prev + delta.content);
+          }
+
+          if (delta.tool_calls) {
+            for (const tc of delta.tool_calls) {
+              const index = tc.index;
+              if (!toolCalls[index]) {
+                toolCalls[index] = {
+                  id: tc.id || '',
+                  type: 'function',
+                  function: { name: tc.function?.name || '', arguments: '' }
+                };
+              }
+              if (tc.function?.name) toolCalls[index].function.name += tc.function.name;
+              if (tc.function?.arguments) toolCalls[index].function.arguments += tc.function.arguments;
+            }
+          }
+        }
+
+        const finalContent = incomingBuffer || null;
+
+        if (finalContent) {
           localHistory.push({
             role: 'assistant',
-            content: assistantMessage.content
+            content: finalContent
           });
           setHistory([...localHistory]);
         }
 
-        // Check if the local model decided to execute a system command tool
-        if (assistantMessage.tool_calls && assistantMessage.tool_calls.length > 0) {
-          
-          // --- Intercept reply_to_user ---
-          const isOnlyReply = assistantMessage.tool_calls.length === 1 && (assistantMessage.tool_calls[0] as any).function.name === 'reply_to_user';
-          if (isOnlyReply) {
-             const args = JSON.parse((assistantMessage.tool_calls[0] as any).function.arguments);
-             setCurrentStream(args.message);
-             localHistory.push({
-               role: 'assistant',
-               content: args.message
-             });
-             setHistory([...localHistory]);
-             keepRunningLoop = false;
-             continue;
-          }
-          // --------------------------------
+        if (toolCalls.length > 0) {
+          // Filter out nulls if array was sparse
+          toolCalls = toolCalls.filter(Boolean);
 
           // Push the tool call request itself to history to satisfy LLM context trees
           localHistory.push({
             role: 'assistant',
-            content: assistantMessage.content || null,
-            tool_calls: assistantMessage.tool_calls
+            content: finalContent,
+            tool_calls: toolCalls
           });
 
-          for (const call of assistantMessage.tool_calls as any[]) {
+          for (const call of toolCalls) {
             const name = call.function.name;
-            const args = JSON.parse(call.function.arguments);
+            const argsText = call.function.arguments || '{}';
+            const args = JSON.parse(argsText);
 
-            setAgentStatus(`💻 System Action Executing: ${name}(${call.function.arguments})`);
+            setAgentStatus(`💻 System Action Executing: ${name}(${argsText})`);
             
             // Run the actual file edit or look up locally
             const result = await executeTool(name, args);

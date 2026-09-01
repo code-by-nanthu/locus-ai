@@ -31,20 +31,6 @@ export const toolDefinitions = [
         required: ['filePath', 'content']
       }
     }
-  },
-  {
-    type: 'function' as const,
-    function: {
-      name: 'reply_to_user',
-      description: 'Send a conversational message or reply back to the user without modifying files.',
-      parameters: {
-        type: 'object',
-        properties: {
-          message: { type: 'string', description: 'The text message to send to the user' }
-        },
-        required: ['message']
-      }
-    }
   }
 ];
 
