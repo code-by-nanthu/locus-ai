@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Box, Text, useInput, useApp } from 'ink';
 import TextInput from 'ink-text-input';
 import Spinner from 'ink-spinner';
@@ -13,9 +13,281 @@ interface Message {
   tool_call_id?: string;
   content: string | null;
   tool_calls?: any[];
+  timestamp?: string; // HH:MM
 }
 
 type Step = 'SELECT_PROVIDER' | 'SELECT_MODEL' | 'CHAT';
+
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+function now(): string {
+  return new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
+}
+
+// ─── Reusable Components ──────────────────────────────────────────────────────
+
+function Logo() {
+  return (
+    <Box>
+      <Text bold color="cyan">◆ </Text>
+      <Text bold color="white">local</Text>
+      <Text bold color="cyan">ai</Text>
+      <Text color="blackBright"> cli</Text>
+    </Box>
+  );
+}
+
+function Divider() {
+  return <Text dimColor>{'─'.repeat(56)}</Text>;
+}
+
+/** Unicode block-style progress bar for the setup wizard */
+function StepBar({ current, total }: { current: number; total: number }) {
+  const filled = '█'.repeat(current);
+  const empty = '░'.repeat(total - current);
+  return (
+    <Box>
+      <Text color="cyan">{filled}</Text>
+      <Text dimColor>{empty}</Text>
+      <Text color="blackBright">  {current}/{total}</Text>
+    </Box>
+  );
+}
+
+// ─── Elapsed Timer ────────────────────────────────────────────────────────────
+
+function ElapsedTimer({ running }: { running: boolean }) {
+  const [elapsed, setElapsed] = useState(0);
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  useEffect(() => {
+    if (running) {
+      setElapsed(0);
+      intervalRef.current = setInterval(() => setElapsed(s => s + 1), 1000);
+    } else {
+      if (intervalRef.current) clearInterval(intervalRef.current);
+    }
+    return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
+  }, [running]);
+
+  if (!running) return null;
+
+  const s = elapsed % 60;
+  const m = Math.floor(elapsed / 60);
+  const label = m > 0 ? `${m}m ${s}s` : `${s}s`;
+  return <Text dimColor> {label}</Text>;
+}
+
+// ─── Tool Entry ───────────────────────────────────────────────────────────────
+
+function ToolEntry({ name, content }: { name?: string; content: string | null }) {
+  let success = true;
+  let detail = '';
+
+  try {
+    const parsed = JSON.parse(content || '{}');
+    if (parsed.success === false || parsed.error) {
+      success = false;
+      detail = parsed.error ?? 'unknown error';
+    } else if (parsed.message) {
+      detail = parsed.message;
+    } else if (parsed.stdout) {
+      // Show up to 2 lines of stdout
+      const lines = parsed.stdout.trim().split('\n').slice(0, 2);
+      detail = lines.join(' ↵ ');
+    } else if (parsed.workspaceFiles) {
+      detail = `${parsed.workspaceFiles.length} files found`;
+    } else if (parsed.content) {
+      const chars = parsed.content.length;
+      const lines = parsed.content.split('\n').length;
+      detail = `${lines} lines, ${chars} chars`;
+    }
+  } catch {
+    detail = 'completed';
+  }
+
+  const meta: Record<string, { icon: string; label: string }> = {
+    read_file:        { icon: '↗', label: 'read' },
+    write_file:       { icon: '↙', label: 'write' },
+    run_command:      { icon: '⚡', label: 'exec' },
+    search_workspace: { icon: '⊙', label: 'scan' },
+  };
+  const { icon, label } = meta[name || ''] ?? { icon: '◦', label: name ?? 'tool' };
+
+  return (
+    <Box paddingLeft={4} marginBottom={0}>
+      <Text color={success ? 'blackBright' : 'red'}>{icon} </Text>
+      <Text color={success ? 'blackBright' : 'red'} bold>{label}</Text>
+      {detail ? <Text dimColor>  {detail}</Text> : null}
+    </Box>
+  );
+}
+
+// ─── Message components ───────────────────────────────────────────────────────
+
+function UserMessage({ content, timestamp }: { content: string; timestamp?: string }) {
+  return (
+    <Box flexDirection="column" marginBottom={1}>
+      <Box>
+        <Text color="blue" bold>you</Text>
+        {timestamp && <Text dimColor>  {timestamp}</Text>}
+      </Box>
+      <Box paddingLeft={2} marginTop={0}>
+        <Text color="white" wrap="wrap">{content}</Text>
+      </Box>
+    </Box>
+  );
+}
+
+function AgentMessage({
+  content,
+  timestamp,
+  streaming,
+}: {
+  content: string;
+  timestamp?: string;
+  streaming?: boolean;
+}) {
+  return (
+    <Box flexDirection="column" marginBottom={1}>
+      <Box>
+        <Text color="cyan" bold>◆ assistant</Text>
+        {timestamp && !streaming && <Text dimColor>  {timestamp}</Text>}
+        {streaming && <Text color="cyan" dimColor>  writing…</Text>}
+      </Box>
+      <Box paddingLeft={2} marginTop={0} flexDirection="column">
+        <SyntaxHighlighter text={content} />
+      </Box>
+    </Box>
+  );
+}
+
+// ─── Empty / Welcome state ────────────────────────────────────────────────────
+
+function WelcomeHints({ model }: { model: string }) {
+  const suggestions = [
+    'Explain how async/await works in JavaScript',
+    'Write a Python script that reads a CSV file',
+    'Search my workspace for TypeScript files',
+    'Run: ls -la and show me the output',
+  ];
+  return (
+    <Box flexDirection="column" marginTop={1} marginBottom={1}>
+      <Box marginBottom={1}>
+        <Text color="blackBright">Ready  ·  </Text>
+        <Text color="cyan">{model}</Text>
+      </Box>
+      <Box marginBottom={1}>
+        <Text dimColor>Try asking:</Text>
+      </Box>
+      {suggestions.map((s, i) => (
+        <Box key={i} paddingLeft={2} marginBottom={0}>
+          <Text dimColor>  {i + 1}.  </Text>
+          <Text color="blackBright">{s}</Text>
+        </Box>
+      ))}
+    </Box>
+  );
+}
+
+// ─── Setup screen wrapper ─────────────────────────────────────────────────────
+
+function SetupShell({
+  stepNum,
+  label,
+  description,
+  children,
+  loading,
+  error,
+}: {
+  stepNum: number;
+  label: string;
+  description: string;
+  children: React.ReactNode;
+  loading?: boolean;
+  error?: string | null;
+}) {
+  return (
+    <Box flexDirection="column" paddingX={3} paddingTop={1} paddingBottom={1}>
+
+      {/* Header */}
+      <Box justifyContent="space-between" marginBottom={1}>
+        <Logo />
+        <Text dimColor>v1.1.0</Text>
+      </Box>
+
+      <Divider />
+
+      {/* Step progress */}
+      <Box flexDirection="column" marginTop={1} marginBottom={1}>
+        <StepBar current={stepNum} total={2} />
+        <Box marginTop={0}>
+          <Text color="white" bold>{label}</Text>
+        </Box>
+        <Text dimColor>{description}</Text>
+      </Box>
+
+      {/* Content */}
+      <Box marginTop={1} marginBottom={1}>
+        {children}
+      </Box>
+
+      {/* Loading */}
+      {loading && (
+        <Box marginBottom={1}>
+          <Text color="cyan"><Spinner type="dots" /></Text>
+          <Text color="blackBright"> Connecting…</Text>
+        </Box>
+      )}
+
+      {/* Error */}
+      {error && (
+        <Box marginBottom={1}>
+          <Text color="red">✖  </Text>
+          <Text color="red">{error}</Text>
+        </Box>
+      )}
+
+      <Divider />
+      {/* Key hints */}
+      <Box marginTop={1}>
+        <Text dimColor>↑↓</Text>
+        <Text color="blackBright"> navigate   </Text>
+        <Text dimColor>Enter</Text>
+        <Text color="blackBright"> select   </Text>
+        <Text dimColor>Ctrl+C</Text>
+        <Text color="blackBright"> quit</Text>
+      </Box>
+    </Box>
+  );
+}
+
+// ─── Item renderer for SelectInput ───────────────────────────────────────────
+
+function ProviderItem({ label, isSelected }: { label: string; isSelected?: boolean }) {
+  const descriptions: Record<string, string> = {
+    Ollama: 'Local models via ollama.ai',
+    'LM Studio': 'Local models via lmstudio.ai',
+  };
+  return (
+    <Box>
+      <Text color={isSelected ? 'cyan' : 'blackBright'}>{isSelected ? '▶ ' : '  '}</Text>
+      <Text color={isSelected ? 'white' : 'blackBright'} bold={isSelected}>{label}</Text>
+      <Text dimColor>   {descriptions[label] ?? ''}</Text>
+    </Box>
+  );
+}
+
+function ModelItem({ label, isSelected }: { label: string; isSelected?: boolean }) {
+  return (
+    <Box>
+      <Text color={isSelected ? 'cyan' : 'blackBright'}>{isSelected ? '▶ ' : '  '}</Text>
+      <Text color={isSelected ? 'white' : 'blackBright'} bold={isSelected}>{label}</Text>
+    </Box>
+  );
+}
+
+// ─── Main App ─────────────────────────────────────────────────────────────────
 
 export function App() {
   const { exit } = useApp();
@@ -23,7 +295,7 @@ export function App() {
   const [provider, setProvider] = useState<Provider>('ollama');
   const [models, setModels] = useState<string[]>([]);
   const [selectedModel, setSelectedModel] = useState<string>('');
-  
+
   const [query, setQuery] = useState('');
   const [history, setHistory] = useState<Message[]>([]);
   const [currentStream, setCurrentStream] = useState('');
@@ -31,34 +303,24 @@ export function App() {
   const [agentStatus, setAgentStatus] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
+  // ── Hotkeys ───────────────────────────────────────────────────────────────
   useInput((input, key) => {
-    // Graceful Exit
     if (key.ctrl && input === 'c') exit();
-
-    // Hotkey: Switch Provider (Ctrl+P)
-    if (key.ctrl && input === 'p') {
-      setErrorMsg(null);
-      setStep('SELECT_PROVIDER');
-    }
-
-    // Hotkey: Switch Model (Ctrl+N)
+    if (key.ctrl && input === 'p') { setErrorMsg(null); setStep('SELECT_PROVIDER'); }
     if (key.ctrl && input === 'n') {
-      if (models.length > 0) {
-        setErrorMsg(null);
-        setStep('SELECT_MODEL');
-      } else {
-        setErrorMsg("Cannot toggle models yet. Please fetch a provider stack profile first.");
-      }
+      if (models.length > 0) { setErrorMsg(null); setStep('SELECT_MODEL'); }
+      else setErrorMsg('No provider connected. Use Ctrl+P first.');
     }
   });
 
+  // ── Provider selection ────────────────────────────────────────────────────
   const handleSelectProvider = async (item: { value: Provider }) => {
     setProvider(item.value);
     setLoading(true);
     setErrorMsg(null);
     try {
       const activeModels = await fetchLocalModels(item.value);
-      if (activeModels.length === 0) throw new Error("No active local models found.");
+      if (activeModels.length === 0) throw new Error('No running models found. Start your provider first.');
       setModels(activeModels);
       setStep('SELECT_MODEL');
     } catch (err: any) {
@@ -73,15 +335,21 @@ export function App() {
     setStep('CHAT');
   };
 
-  // The Agent loop handles standard generation or intercepts system file tool runs
+  // ── Agent loop ────────────────────────────────────────────────────────────
   const handleSubmitChat = async () => {
     if (!query.trim() || loading) return;
 
-    let localHistory: Message[] = [...history, { role: 'user', content: query }];
+    const userInput = query;
+    const ts = now();
+
+    let localHistory: Message[] = [
+      ...history,
+      { role: 'user', content: userInput, timestamp: ts },
+    ];
     setHistory(localHistory);
     setQuery('');
     setLoading(true);
-    setAgentStatus("Thinking...");
+    setAgentStatus('Thinking');
 
     const client = getLocalClient(provider);
     let keepRunningLoop = true;
@@ -89,24 +357,30 @@ export function App() {
     try {
       while (keepRunningLoop) {
         setCurrentStream('');
-        
-        const hasToolsInHistory = localHistory.some(m => m.role === 'tool' || (m.tool_calls && m.tool_calls.length > 0));
-        const isFileCommand = /read|write|file|create|make|code|folder|directory|script|app|run|test|execute|command|install|npm|yarn|pnpm|search|find|workspace|scan/i.test(query) || hasToolsInHistory;
+
+        const hasToolsInHistory = localHistory.some(
+          m => m.role === 'tool' || (m.tool_calls && m.tool_calls.length > 0)
+        );
+        const isFileCommand =
+          /read|write|file|create|make|code|folder|directory|script|app|run|test|execute|command|install|npm|yarn|pnpm|search|find|workspace|scan/i.test(
+            userInput
+          ) || hasToolsInHistory;
 
         const requestConfig: any = {
           model: selectedModel,
           messages: [
             {
               role: 'system',
-              content: 'You are a local AI CLI assistant. Your primary function is conversational.\n\nCRITICAL RULES:\n1. NEVER call `read_file` or `write_file` unless the user explicitly requests you to read, write, or create a file.\n2. If the user just says "hi", "hello", or asks a general question, you MUST NOT use any tools. Just reply directly with a conversational message.'
+              content:
+                'You are a helpful local AI CLI assistant.\n\nRULES:\n1. NEVER call any tools unless the user explicitly asks to read/write/run something.\n2. For all conversation and questions, respond in plain text without using tools.',
             },
             ...localHistory.map(m => ({
               role: m.role,
               content: m.content,
               name: m.name,
               tool_call_id: m.tool_call_id,
-              tool_calls: m.tool_calls
-            }))
+              tool_calls: m.tool_calls,
+            })),
           ],
           stream: true,
         };
@@ -116,7 +390,6 @@ export function App() {
           requestConfig.tool_choice = 'auto';
         }
 
-        // Request completion with streaming enabled
         const response = await client.chat.completions.create(requestConfig);
 
         let incomingBuffer = '';
@@ -125,21 +398,15 @@ export function App() {
         for await (const chunk of response as any) {
           const delta = chunk.choices?.[0]?.delta;
           if (!delta) continue;
-
           if (delta.content) {
             incomingBuffer += delta.content;
-            setCurrentStream((prev) => prev + delta.content);
+            setCurrentStream(prev => prev + delta.content);
           }
-
           if (delta.tool_calls) {
             for (const tc of delta.tool_calls) {
               const index = tc.index;
               if (!toolCalls[index]) {
-                toolCalls[index] = {
-                  id: tc.id || '',
-                  type: 'function',
-                  function: { name: tc.function?.name || '', arguments: '' }
-                };
+                toolCalls[index] = { id: tc.id || '', type: 'function', function: { name: tc.function?.name || '', arguments: '' } };
               }
               if (tc.function?.name) toolCalls[index].function.name += tc.function.name;
               if (tc.function?.arguments) toolCalls[index].function.arguments += tc.function.arguments;
@@ -150,59 +417,39 @@ export function App() {
         const finalContent = incomingBuffer || null;
 
         if (finalContent) {
-          localHistory.push({
-            role: 'assistant',
-            content: finalContent
-          });
+          localHistory.push({ role: 'assistant', content: finalContent, timestamp: now() });
           setHistory([...localHistory]);
         }
 
         if (toolCalls.length > 0) {
-          // Filter out nulls if array was sparse
           toolCalls = toolCalls.filter(Boolean);
-
-          // Push the tool call request itself to history to satisfy LLM context trees
-          localHistory.push({
-            role: 'assistant',
-            content: finalContent,
-            tool_calls: toolCalls
-          });
+          localHistory.push({ role: 'assistant', content: finalContent, tool_calls: toolCalls });
 
           for (const call of toolCalls) {
             let name = call.function.name;
             if (name.includes('search_workspace')) name = 'search_workspace';
-            if (name.includes('write_file')) name = 'write_file';
-            if (name.includes('read_file')) name = 'read_file';
-            if (name.includes('run_command')) name = 'run_command';
+            if (name.includes('write_file'))       name = 'write_file';
+            if (name.includes('read_file'))        name = 'read_file';
+            if (name.includes('run_command'))      name = 'run_command';
 
             const argsText = call.function.arguments || '{}';
             const args = JSON.parse(argsText);
 
-            setAgentStatus(`Executing system pipeline: ${name}...`);
-            
-            // Run the actual file edit or look up locally
+            setAgentStatus(`${name.replace('_', ' ')}`);
             const result = await executeTool(name, args);
 
-            // Feed the results back directly into our context window history track
-            localHistory.push({
-              role: 'tool',
-              name: name,
-              tool_call_id: call.id,
-              content: result
-            });
+            localHistory.push({ role: 'tool', name, tool_call_id: call.id, content: result });
           }
 
           setHistory([...localHistory]);
-          setAgentStatus("Synthesizing system results...");
-          // Continue loop: Send the tool execution result back to the model
-          continue; 
+          setAgentStatus('Synthesizing');
+          continue;
         }
 
-        // Loop finishes when the model decides to stop calling tools and just replies with content
         keepRunningLoop = false;
       }
     } catch (error: any) {
-      setErrorMsg(`Agent Thread Execution Dropped: ${error.message}`);
+      setErrorMsg(error.message);
     } finally {
       setLoading(false);
       setAgentStatus(null);
@@ -210,142 +457,139 @@ export function App() {
     }
   };
 
-  // ----------------------------------------------------
-  // STEP 1: SELECT PROVIDER
-  // ----------------------------------------------------
+  // ── SCREEN: Provider ─────────────────────────────────────────────────────
   if (step === 'SELECT_PROVIDER') {
     return (
-      <Box flexDirection="column" paddingY={1} paddingX={2}>
-        <Box borderStyle="round" borderColor="blue" paddingX={1} marginBottom={1}>
-          <Text bold color="blue"> ✦ GEMINI CLI </Text>
-        </Box>
-        <Text color="gray">Select local system runtime engine provider:</Text>
-        <Box marginTop={1} marginBottom={1}>
-          <SelectInput 
-            items={[
-              { label: '  🦙 Ollama Runtime Server', value: 'ollama' as Provider }, 
-              { label: '  🔬 LM Studio Engine Sandbox', value: 'lmstudio' as Provider }
-            ]} 
-            onSelect={handleSelectProvider} 
-          />
-        </Box>
-        {loading && <Text color="blue"><Spinner type="dots" /> Querying local configurations...</Text>}
-        {errorMsg && <Text color="red">⚠️ {errorMsg}</Text>}
-      </Box>
+      <SetupShell
+        stepNum={1}
+        label="Select a provider"
+        description="Which local LLM runtime are you using?"
+        loading={loading}
+        error={errorMsg}
+      >
+        <SelectInput
+          items={[
+            { label: 'Ollama', value: 'ollama' as Provider },
+            { label: 'LM Studio', value: 'lmstudio' as Provider },
+          ]}
+          onSelect={handleSelectProvider}
+          itemComponent={ProviderItem}
+        />
+      </SetupShell>
     );
   }
 
-  // ----------------------------------------------------
-  // STEP 2: SELECT MODEL
-  // ----------------------------------------------------
+  // ── SCREEN: Model ────────────────────────────────────────────────────────
   if (step === 'SELECT_MODEL') {
     return (
-      <Box flexDirection="column" paddingY={1} paddingX={2}>
-        <Box borderStyle="round" borderColor="blue" paddingX={1} marginBottom={1}>
-          <Text bold color="blue"> ✦ GEMINI CLI </Text>
-        </Box>
-        <Text color="gray">Select the local neural model weight for execution:</Text>
-        <Box marginTop={1}>
-          <SelectInput items={models.map((m) => ({ label: `  📦 ${m}`, value: m }))} onSelect={handleSelectModel} />
-        </Box>
-      </Box>
+      <SetupShell
+        stepNum={2}
+        label="Select a model"
+        description={`Detected ${models.length} model${models.length !== 1 ? 's' : ''} on ${provider}`}
+        error={errorMsg}
+      >
+        <SelectInput
+          items={models.map(m => ({ label: m, value: m }))}
+          onSelect={handleSelectModel}
+          itemComponent={ModelItem}
+        />
+      </SetupShell>
     );
   }
 
-  // ----------------------------------------------------
-  // STEP 3: MODERN RE-DESIGNED CHAT AGENT WORKSPACE
-  // ----------------------------------------------------
+  // Count only user turns for display
+  const turnCount = history.filter(m => m.role === 'user').length;
+
+  // ── SCREEN: Chat ─────────────────────────────────────────────────────────
   return (
-    <Box flexDirection="column" paddingX={2} paddingY={1}>
-      {/* PROFESSIONAL DYNAMIC STEERING HEADER HEADER */}
-      <Box borderStyle="round" borderColor="blue" justifyContent="space-between" paddingX={1} marginBottom={1}>
+    <Box flexDirection="column" paddingX={2} paddingTop={1} paddingBottom={1}>
+
+      {/* ── Header ─────────────────────────────────────────────────────── */}
+      <Box justifyContent="space-between" marginBottom={0}>
+        <Logo />
         <Box>
-          <Text bold color="blue">✦ GEMINI CLI </Text>
-          <Text color="gray">v1.1.0</Text>
-        </Box>
-        <Box>
-          <Text color="gray">Engine: </Text>
-          <Text color="cyan" bold>{provider.toUpperCase()}</Text>
-          <Text color="gray"> ┃ Model: </Text>
-          <Text color="magenta" bold>{selectedModel}</Text>
+          <Text dimColor>{provider}  </Text>
+          <Text color="cyan">{selectedModel}</Text>
         </Box>
       </Box>
 
-      {/* FOOTER HELPER SHORTCUT BAR */}
-      <Box borderStyle="classic" borderColor="dim" paddingX={1} marginBottom={1}>
-        <Text dimColor>Hotkeys: </Text>
-        <Text color="yellow" bold>Ctrl+P</Text>
-        <Text dimColor> Change Backend Provider ┃ </Text>
-        <Text color="yellow" bold>Ctrl+N</Text>
-        <Text dimColor> Switch Target Model</Text>
-      </Box>
-
-      {/* CONVERSATION AREA */}
-      <Box flexDirection="column" marginBottom={1}>
-        {history.map((msg, idx) => {
-          if (msg.role === 'tool') {
-            return (
-              <Box key={idx} paddingLeft={2} marginY={1}>
-                <Text color="blue">├─ </Text>
-                <Text color="gray" italic>Workspace pipeline tool update [{msg.name}] complete.</Text>
-              </Box>
-            );
-          }
-          if (!msg.content) return null;
-          
-          const isUser = msg.role === 'user';
-          return (
-            <Box key={idx} flexDirection="column" marginY={1}>
-              <Box marginBottom={0}>
-                <Text bold color={isUser ? 'blue' : 'green'}>
-                  {isUser ? '👤 You' : '✦ Gemini Agent'}
-                </Text>
-              </Box>
-              <Box paddingLeft={2}>
-                <SyntaxHighlighter text={msg.content} />
-              </Box>
-            </Box>
-          );
-        })}
-
-        {/* STREAMING CHUNK LAYER */}
-        {currentStream.length > 0 && (
-          <Box flexDirection="column" marginY={1}>
-            <Box>
-              <Text bold color="green">✦ Gemini Agent</Text>
-            </Box>
-            <Box paddingLeft={2}>
-              <SyntaxHighlighter text={currentStream} />
-            </Box>
-          </Box>
+      {/* ── Sub-header: hotkeys + session stats ────────────────────────── */}
+      <Box justifyContent="space-between" marginBottom={1}>
+        <Box>
+          <Text dimColor>Ctrl+P</Text>
+          <Text color="blackBright"> provider  </Text>
+          <Text dimColor>Ctrl+N</Text>
+          <Text color="blackBright"> model  </Text>
+          <Text dimColor>Ctrl+C</Text>
+          <Text color="blackBright"> quit</Text>
+        </Box>
+        {turnCount > 0 && (
+          <Text dimColor>{turnCount} turn{turnCount !== 1 ? 's' : ''}</Text>
         )}
       </Box>
 
-      {/* SYSTEM PIPELINE LOADING MESSAGES */}
+      <Divider />
+
+      {/* ── Conversation ───────────────────────────────────────────────── */}
+      <Box flexDirection="column" marginTop={1}>
+
+        {/* Empty / welcome state */}
+        {history.length === 0 && !loading && (
+          <WelcomeHints model={selectedModel} />
+        )}
+
+        {history.map((msg, idx) => {
+          if (msg.role === 'tool') {
+            return <ToolEntry key={idx} name={msg.name} content={msg.content} />;
+          }
+          // Skip tool-call wrapper messages with no text
+          if (msg.role === 'assistant' && !msg.content && msg.tool_calls?.length) return null;
+          if (!msg.content) return null;
+
+          if (msg.role === 'user') {
+            return <UserMessage key={idx} content={msg.content} timestamp={msg.timestamp} />;
+          }
+          return <AgentMessage key={idx} content={msg.content} timestamp={msg.timestamp} />;
+        })}
+
+        {/* Live stream */}
+        {currentStream.length > 0 && (
+          <AgentMessage content={currentStream} streaming />
+        )}
+      </Box>
+
+      {/* ── Loading / status ────────────────────────────────────────────── */}
       {loading && (
-        <Box marginBottom={1} paddingLeft={2}>
-          <Text color="cyan">
-            <Spinner type="dots" /> {agentStatus || "Processing matrix arrays..."}
-          </Text>
+        <Box marginTop={1} marginBottom={1}>
+          <Text color="cyan"><Spinner type="dots" /></Text>
+          <Text color="blackBright"> {agentStatus ?? 'Thinking'}</Text>
+          <ElapsedTimer running={loading} />
         </Box>
       )}
 
+      {/* ── Error ──────────────────────────────────────────────────────── */}
       {errorMsg && (
-        <Box borderStyle="single" borderColor="red" paddingX={1} marginBottom={1}>
-          <Text color="red">⚠️ {errorMsg}</Text>
+        <Box marginTop={1} marginBottom={1}>
+          <Text color="red">✖  </Text>
+          <Text color="red">{errorMsg}</Text>
         </Box>
       )}
 
-      {/* MODERN CHAT INPUT COMPONENT */}
-      <Box borderStyle="round" borderColor="gray" paddingLeft={1} marginTop={1}>
-        <Text color="blue">✦ </Text>
-        <TextInput 
-          value={query} 
-          onChange={setQuery} 
-          onSubmit={handleSubmitChat} 
-          placeholder="Ask Gemini to scan workspace files or hot-swap settings dynamically..." 
+      <Divider />
+
+      {/* ── Input ──────────────────────────────────────────────────────── */}
+      <Box marginTop={1}>
+        <Text color={loading ? 'blackBright' : 'cyan'} bold>
+          {loading ? '… ' : '▶ '}
+        </Text>
+        <TextInput
+          value={query}
+          onChange={val => { setErrorMsg(null); setQuery(val); }}
+          onSubmit={handleSubmitChat}
+          placeholder={loading ? 'waiting for response…' : 'Ask anything or give a task…'}
         />
       </Box>
+
     </Box>
   );
 }
