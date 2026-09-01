@@ -399,6 +399,8 @@ export function App() {
   const [agentStatus, setAgentStatus] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
+  const abortControllerRef = useRef<AbortController | null>(null);
+
   // ── Security approval gateway ────────────────────────────────────────────
   // Tools that require explicit user approval before running
   const GUARDED_TOOLS = new Set(['write_file', 'run_command']);
@@ -479,6 +481,15 @@ export function App() {
   useInput((input, key) => {
     // Always allow quit
     if (key.ctrl && input === 'c') exit();
+
+    // Abort stream generation
+    if (key.escape && loading && !pendingApproval) {
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+        abortControllerRef.current = null;
+      }
+      return;
+    }
 
     // When an approval gate is active, Y/N are captured exclusively
     if (pendingApproval) {
@@ -608,28 +619,43 @@ export function App() {
           requestConfig.tool_choice = 'auto';
         }
 
-        const response = await client.chat.completions.create(requestConfig);
-
         let incomingBuffer = '';
         let toolCalls: any[] = [];
 
-        for await (const chunk of response as any) {
-          const delta = chunk.choices?.[0]?.delta;
-          if (!delta) continue;
-          if (delta.content) {
-            incomingBuffer += delta.content;
-            setCurrentStream(prev => prev + delta.content);
-          }
-          if (delta.tool_calls) {
-            for (const tc of delta.tool_calls) {
-              const index = tc.index;
-              if (!toolCalls[index]) {
-                toolCalls[index] = { id: tc.id || '', type: 'function', function: { name: tc.function?.name || '', arguments: '' } };
+        abortControllerRef.current = new AbortController();
+
+        try {
+          const response = await client.chat.completions.create(requestConfig, {
+            signal: abortControllerRef.current.signal,
+          });
+
+          for await (const chunk of response as any) {
+            const delta = chunk.choices?.[0]?.delta;
+            if (!delta) continue;
+            if (delta.content) {
+              incomingBuffer += delta.content;
+              setCurrentStream(prev => prev + delta.content);
+            }
+            if (delta.tool_calls) {
+              for (const tc of delta.tool_calls) {
+                const index = tc.index;
+                if (!toolCalls[index]) {
+                  toolCalls[index] = { id: tc.id || '', type: 'function', function: { name: tc.function?.name || '', arguments: '' } };
+                }
+                if (tc.function?.name) toolCalls[index].function.name += tc.function.name;
+                if (tc.function?.arguments) toolCalls[index].function.arguments += tc.function.arguments;
               }
-              if (tc.function?.name) toolCalls[index].function.name += tc.function.name;
-              if (tc.function?.arguments) toolCalls[index].function.arguments += tc.function.arguments;
             }
           }
+        } catch (err: any) {
+          if (err.name === 'AbortError') {
+            // User aborted the stream — keep whatever was buffered and stop the loop
+            keepRunningLoop = false;
+          } else {
+            throw err;
+          }
+        } finally {
+          abortControllerRef.current = null;
         }
 
         const finalContent = incomingBuffer || null;
@@ -779,6 +805,12 @@ export function App() {
           <Text color="blackBright"> provider  </Text>
           <Text dimColor>Ctrl+N</Text>
           <Text color="blackBright"> model  </Text>
+          {loading && !pendingApproval && (
+            <>
+              <Text dimColor>Esc</Text>
+              <Text color="blackBright"> stop  </Text>
+            </>
+          )}
           <Text dimColor>Ctrl+C</Text>
           <Text color="blackBright"> quit</Text>
         </Box>
