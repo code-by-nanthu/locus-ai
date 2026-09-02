@@ -3,11 +3,11 @@ import { Box, Text, useInput, useApp } from 'ink';
 import TextInput from 'ink-text-input';
 import Spinner from 'ink-spinner';
 import SelectInput from 'ink-select-input';
-import { getLocalClient, fetchLocalModels, Provider } from './llm.js';
-import { toolDefinitions, executeTool } from './tools.js';
+import { getLocalClient, fetchLocalModels, Provider } from '../services/llm.js';
+import { toolDefinitions, executeTool } from '../services/tools.js';
 import { SyntaxHighlighter } from './SyntaxHighlighter.js';
-import { loadConfig, saveConfig, LocusConfig } from './config.js';
-import { generateSessionId, saveSession, listSessionsDetail, loadSession, deleteSession, SessionSummary } from './session.js';
+import { loadConfig, saveConfig, LocusConfig } from '../core/config.js';
+import { generateSessionId, saveSession, listSessionsDetail, loadSession, deleteSession, SessionSummary } from '../core/session.js';
 
 interface Message {
   role: 'user' | 'assistant' | 'tool';

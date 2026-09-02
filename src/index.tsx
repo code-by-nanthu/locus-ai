@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 import React from 'react';
 import { render } from 'ink';
-import { App } from './ui.js';
-import { loadSession, listSessions, listSessionsDetail } from './session.js';
-import { loadConfig } from './config.js';
+import { App } from './components/App.js';
+import { loadSession, listSessions, listSessionsDetail } from './core/session.js';
+import { loadConfig } from './core/config.js';
 
 async function main() {
   const args = process.argv.slice(2);
