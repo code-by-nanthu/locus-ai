@@ -3,14 +3,79 @@ import React from 'react';
 import { render } from 'ink';
 import { App } from './components/App.js';
 import { loadSession, listSessions, listSessionsDetail } from './core/session.js';
-import { loadConfig } from './core/config.js';
+import { loadConfig, LocusConfig } from './core/config.js';
 import { runCommitCommand } from './commands/commit.js';
 import { runExportCommand } from './commands/export.js';
 import { runUiCommand } from './commands/ui.js';
+import type { Provider } from './services/llm.js';
+
+// ── Session resolution helper ─────────────────────────────────────────────────
+
+interface InitialSession {
+  history: any[];
+  provider: Provider | null;
+  model: string | null;
+  sessionId: string | null;
+}
+
+/**
+ * Resolves initial session state before rendering the CLI app.
+ *
+ * Priority order:
+ *   1. --session <id> flag → load that specific session
+ *   2. config defaults set → auto-restore the most recent session
+ *   3. No config → return empty state (setup wizard will run)
+ */
+async function resolveInitialSession(
+  config: LocusConfig | null,
+  args: string[]
+): Promise<InitialSession> {
+  const empty: InitialSession = {
+    history: [],
+    provider: config?.defaultProvider as Provider ?? null,
+    model: config?.defaultModel ?? null,
+    sessionId: null,
+  };
+
+  const sessionFlagIdx = args.indexOf('--session');
+
+  if (sessionFlagIdx !== -1) {
+    const sessionId = args[sessionFlagIdx + 1];
+    if (!sessionId) {
+      console.error('[locus] --session requires an ID argument. Starting fresh.');
+      return empty;
+    }
+    const session = await loadSession(sessionId);
+    if (!session) {
+      console.error(`[locus] Session "${sessionId}" not found. Starting fresh.`);
+      return empty;
+    }
+    return {
+      history: session.messages,
+      provider: session.provider as Provider,
+      model: session.model,
+      sessionId,
+    };
+  }
+
+  // Auto-restore the most recent session when config defaults are set
+  if (config?.defaultProvider && config?.defaultModel) {
+    const sessions = await listSessions();
+    if (sessions.length > 0) {
+      const latest = await loadSession(sessions[0]);
+      if (latest) {
+        return { ...empty, history: latest.messages, sessionId: sessions[0] };
+      }
+    }
+  }
+
+  return empty;
+}
+
+// ── Main entry point ──────────────────────────────────────────────────────────
 
 async function main() {
   const args = process.argv.slice(2);
-  const sessionFlagIdx = args.indexOf('--session');
 
   // ── locus sessions — list all saved sessions and exit ──────────────────────
   if (args[0] === 'sessions') {
@@ -20,7 +85,7 @@ async function main() {
       process.exit(0);
     }
     console.log('\n  Saved sessions (most recent first):\n');
-    console.log('  ' + ['ID', 'Model', 'Turns', 'Date'].map(h => h.padEnd(28)).join(''));
+    console.log('  ' + ['ID', 'Model', 'Turns', 'Date'].map((h) => h.padEnd(28)).join(''));
     console.log('  ' + '─'.repeat(88));
     for (const s of sessions) {
       const date = new Date(s.createdAt).toLocaleString('en-GB', {
@@ -47,8 +112,7 @@ async function main() {
 
   // ── locus export [id] ──────────────────────────────────────────────────────
   if (args[0] === 'export') {
-    const sessionId = args[1]; // optional
-    await runExportCommand(sessionId);
+    await runExportCommand(args[1]);
     return;
   }
 
@@ -58,49 +122,16 @@ async function main() {
     return;
   }
 
-  // Load saved config (if any)
   const config = await loadConfig();
-
-  // Load session if --session <id> was passed
-  let initialHistory: any[] = [];
-  let initialProvider = config?.defaultProvider ?? null;
-  let initialModel = config?.defaultModel ?? null;
-  let initialSessionId: string | null = null;
-
-  if (sessionFlagIdx !== -1) {
-    const sessionId = args[sessionFlagIdx + 1];
-    if (sessionId) {
-      const session = await loadSession(sessionId);
-      if (session) {
-        initialHistory = session.messages;
-        initialProvider = session.provider as any;
-        initialModel = session.model;
-        initialSessionId = sessionId;
-      } else {
-        console.error(`[locus] Session "${sessionId}" not found. Starting fresh.`);
-      }
-    } else {
-      console.error('[locus] --session requires an ID argument. Starting fresh.');
-    }
-  } else if (config?.defaultProvider && config?.defaultModel) {
-    // No explicit --session flag: auto-restore the most recent session
-    const sessions = await listSessions();
-    if (sessions.length > 0) {
-      const latest = await loadSession(sessions[0]);
-      if (latest) {
-        initialHistory = latest.messages;
-        initialSessionId = sessions[0];
-      }
-    }
-  }
+  const { history, provider, model, sessionId } = await resolveInitialSession(config, args);
 
   render(
     <App
       config={config}
-      initialHistory={initialHistory}
-      initialProvider={initialProvider}
-      initialModel={initialModel}
-      initialSessionId={initialSessionId}
+      initialHistory={history}
+      initialProvider={provider}
+      initialModel={model}
+      initialSessionId={sessionId}
     />
   );
 }

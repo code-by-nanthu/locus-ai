@@ -15,9 +15,9 @@ export const DEFAULT_URLS: Record<Provider, string> = {
 
 /**
  * Returns the base URL for a provider.
- * Accepts an optional override from the user's config file.
+ * Private — callers outside this module should pass a `baseURL` override directly.
  */
-export function getBaseURL(provider: Provider, override?: string): string {
+function resolveBaseURL(provider: Provider, override?: string): string {
   return override ?? DEFAULT_URLS[provider];
 }
 
@@ -28,7 +28,7 @@ export function getBaseURL(provider: Provider, override?: string): string {
  */
 export function getLocalClient(provider: Provider, baseURL?: string) {
   return new OpenAI({
-    baseURL: getBaseURL(provider, baseURL),
+    baseURL: resolveBaseURL(provider, baseURL),
     apiKey: 'local-no-key-required',
   });
 }
@@ -36,7 +36,7 @@ export function getLocalClient(provider: Provider, baseURL?: string) {
 /** Dynamically fetch installed models from the active local provider */
 export async function fetchLocalModels(provider: Provider, baseURL?: string): Promise<string[]> {
   try {
-    const url = `${getBaseURL(provider, baseURL)}/models`;
+    const url = `${resolveBaseURL(provider, baseURL)}/models`;
     const response = await fetch(url);
     if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
 

@@ -118,7 +118,6 @@ export async function executeTool(name: string, args: any): Promise<string> {
     }
 
     if (name === 'run_command') {
-      // Execute bash instruction asynchronously using execa
       const { stdout, stderr } = await execa({ shell: true, reject: false })`${args.command}`;
       return JSON.stringify({
         success: true,
@@ -193,4 +192,21 @@ export async function executeTool(name: string, args: any): Promise<string> {
   } catch (error: any) {
     return JSON.stringify({ success: false, error: error.message });
   }
+}
+
+/**
+ * Normalises a potentially-mangled tool name returned by a model that
+ * concatenates or partially-emits function names during streaming.
+ * Falls back to the original string if no known tool matches.
+ */
+const KNOWN_TOOL_NAMES = [
+  'search_workspace',
+  'read_file',
+  'write_file',
+  'run_command',
+  'browser_action',
+] as const;
+
+export function normalizeToolName(name: string): string {
+  return KNOWN_TOOL_NAMES.find((t) => name.includes(t)) ?? name;
 }

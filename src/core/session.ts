@@ -40,7 +40,7 @@ function getSessionPath(id: string): string {
  * Example: "2026-09-02T20-42-05"
  */
 export function generateSessionId(): string {
-  return new Date().toISOString().replace(/:/g, '-').replace(/\..+/, '');
+  return new Date().toISOString().slice(0, 19).replace(/:/g, '-');
 }
 
 /**
@@ -134,25 +134,21 @@ export interface SessionSummary {
  */
 export async function listSessionsDetail(): Promise<SessionSummary[]> {
   const ids = await listSessions();
-  const summaries: SessionSummary[] = [];
-
-  for (const id of ids) {
-    try {
+  const results = await Promise.allSettled(
+    ids.map(async (id): Promise<SessionSummary> => {
       const raw = await fs.readFile(getSessionPath(id), 'utf-8');
       const session = JSON.parse(raw) as SessionFile;
-      summaries.push({
+      return {
         id,
         title: session.title,
         provider: session.provider,
         model: session.model,
         createdAt: session.createdAt,
-        turns: session.messages.filter(m => m.role === 'user').length,
-      });
-    } catch {
-      // skip corrupt files
-    }
-  }
-
-  return summaries;
+        turns: session.messages.filter((m) => m.role === 'user').length,
+      };
+    })
+  );
+  return results
+    .filter((r): r is PromiseFulfilledResult<SessionSummary> => r.status === 'fulfilled')
+    .map((r) => r.value);
 }
-
