@@ -10,5 +10,7 @@
     "strict": true,
     "skipLibCheck": true,
     "types": ["node"]
-  }
+  },
+  "include": ["src"],
+  "exclude": ["src/web"]
 }

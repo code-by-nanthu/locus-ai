@@ -5,30 +5,44 @@
   "type": "module",
   "bin": "./dist/index.js",
   "scripts": {
-    "build": "tsc",
-    "start": "tsc && node ./dist/index.js"
+    "build:web": "vite build -c vite.web.config.ts",
+    "build": "pnpm build:web && tsc",
+    "start": "pnpm build && node ./dist/index.js"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "packageManager": "pnpm@11.25.0",
   "dependencies": {
+    "@tailwindcss/vite": "^4.3.3",
     "chalk": "^6.0.0",
+    "clsx": "^2.1.1",
     "execa": "^10.0.1",
+    "express": "^5.2.1",
     "glob": "^13.0.6",
     "gradient-string": "^3.0.0",
     "ink": "^7.1.1",
     "ink-select-input": "^6.2.0",
     "ink-spinner": "^5.0.0",
     "ink-text-input": "^6.0.0",
+    "lucide-react": "^1.38.0",
+    "open": "^11.0.2",
     "openai": "^7.8.0",
     "playwright": "^1.62.1",
-    "react": "^19.2.8"
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "react-markdown": "^10.1.0",
+    "tailwind-merge": "^3.6.0",
+    "tailwindcss": "^4.3.3"
   },
   "devDependencies": {
+    "@types/express": "^5.0.6",
     "@types/gradient-string": "^1.1.6",
     "@types/node": "^26.4.0",
     "@types/react": "^19.2.18",
-    "typescript": "^7.0.2"
+    "@types/react-dom": "^19.2.5",
+    "@vitejs/plugin-react": "^6.1.1",
+    "typescript": "^7.0.2",
+    "vite": "^8.2.2"
   }
 }

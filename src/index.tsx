@@ -6,6 +6,7 @@ import { loadSession, listSessions, listSessionsDetail } from './core/session.js
 import { loadConfig } from './core/config.js';
 import { runCommitCommand } from './commands/commit.js';
 import { runExportCommand } from './commands/export.js';
+import { runUiCommand } from './commands/ui.js';
 
 async function main() {
   const args = process.argv.slice(2);
@@ -48,6 +49,12 @@ async function main() {
   if (args[0] === 'export') {
     const sessionId = args[1]; // optional
     await runExportCommand(sessionId);
+    return;
+  }
+
+  // ── locus ui ───────────────────────────────────────────────────────────────
+  if (args[0] === 'ui') {
+    await runUiCommand();
     return;
   }
 

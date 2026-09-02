@@ -1,0 +1,363 @@
+@import "tailwindcss";
+@variant dark (&:where(.dark, .dark *));
+
+/* ===========================================================================
+   TOKENS
+   Semantic names only. `.dark` re-points the same custom properties, so every
+   utility (bg-surface, text-ink-muted, border-line) follows automatically and
+   components carry no `dark:` variants.
+   ======================================================================== */
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "Fira Code", "JetBrains Mono", ui-monospace, monospace;
+
+  /* surfaces: canvas < surface < raised; inset is always dark (code/terminal) */
+  --color-canvas: #ffffff;
+  --color-surface: #f6f7f8;
+  --color-raised: #ffffff;
+  --color-inset: #0f1417;
+
+  --color-line: #e6e9eb;
+  --color-line-strong: #cfd5d9;
+
+  --color-ink: #0f1417;
+  --color-ink-muted: #5c666d;
+  --color-ink-subtle: #8d979d;
+
+  /* one functional accent, used sparingly: send, active session, live cursor */
+  --color-accent: #0f8a7e;
+  --color-accent-hover: #0b6f66;
+  --color-accent-ink: #ffffff;
+  --color-accent-soft: #eaf4f2;
+  --color-accent-line: #c2e0db;
+
+  --color-warn: #a75a09;
+  --color-warn-soft: #fdf3e5;
+  --color-warn-line: #f0dab4;
+  --color-danger: #bc3529;
+  --color-danger-soft: #fdefed;
+  --color-danger-line: #f4ccc7;
+  --color-ok: #14803c;
+
+  --shadow-lift: 0 1px 2px rgb(15 20 23 / 0.04), 0 8px 24px -14px rgb(15 20 23 / 0.18);
+  --shadow-panel: 0 32px 80px -28px rgb(8 12 16 / 0.38);
+}
+
+.dark {
+  --color-canvas: #0b0e10;
+  --color-surface: #13171a;
+  --color-raised: #181d21;
+  --color-inset: #080b0d;
+
+  --color-line: #232a2f;
+  --color-line-strong: #333c43;
+
+  --color-ink: #e8edef;
+  --color-ink-muted: #99a3aa;
+  --color-ink-subtle: #6a747b;
+
+  --color-accent: #2bb8a6;
+  --color-accent-hover: #45cdbb;
+  --color-accent-ink: #04120f;
+  --color-accent-soft: #2bb8a61c;
+  --color-accent-line: #2bb8a63b;
+
+  --color-warn: #e0a83a;
+  --color-warn-soft: #e0a83a1a;
+  --color-warn-line: #e0a83a33;
+  --color-danger: #f0776c;
+  --color-danger-soft: #f0776c17;
+  --color-danger-line: #f0776c33;
+  --color-ok: #4ec97a;
+
+  --shadow-lift: 0 1px 2px rgb(0 0 0 / 0.45), 0 12px 32px -18px rgb(0 0 0 / 0.7);
+  --shadow-panel: 0 36px 90px -30px rgb(0 0 0 / 0.8);
+}
+
+@layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    @apply font-sans antialiased bg-canvas text-ink overflow-hidden h-screen flex flex-col;
+    font-feature-settings: "cv05" 1, "ss01" 1;
+    text-rendering: optimizeLegibility;
+  }
+
+  ::selection {
+    background: var(--color-accent-soft);
+    color: var(--color-ink);
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+    border-radius: 8px;
+  }
+
+  button,
+  textarea,
+  input {
+    font: inherit;
+    color: inherit;
+  }
+}
+
+/* Overlay scrollbars */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--color-ink) 14%, transparent);
+  border: 3px solid transparent;
+  background-clip: padding-box;
+  border-radius: 999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--color-ink) 28%, transparent);
+  background-clip: padding-box;
+}
+* {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--color-ink) 16%, transparent) transparent;
+}
+
+/* ===========================================================================
+   MOTION — replaces tailwindcss-animate (never installed). Three primitives.
+   ======================================================================== */
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}
+@keyframes pop {
+  from {
+    opacity: 0;
+    transform: scale(0.96) translateY(6px);
+  }
+}
+@keyframes blink {
+  50% {
+    opacity: 0;
+  }
+}
+@keyframes spin-ring {
+  to {
+    transform: rotate(1turn);
+  }
+}
+@keyframes breathe {
+  0%,
+  100% {
+    opacity: 0.2;
+  }
+  45% {
+    opacity: 1;
+  }
+}
+
+.rise {
+  animation: rise 0.28s cubic-bezier(0.22, 0.72, 0.28, 1) both;
+}
+.pop {
+  animation: pop 0.16s cubic-bezier(0.22, 0.72, 0.28, 1) both;
+}
+
+/* live token cursor */
+.caret::after {
+  content: "";
+  display: inline-block;
+  width: 0.42em;
+  height: 1.02em;
+  margin-left: 0.14em;
+  translate: 0 0.16em;
+  background: var(--color-accent);
+  animation: blink 1.1s steps(2, start) infinite;
+}
+
+.spinner {
+  border: 2px solid color-mix(in srgb, var(--color-ink) 15%, transparent);
+  border-top-color: var(--color-accent);
+  border-radius: 999px;
+  animation: spin-ring 0.7s linear infinite;
+}
+
+.breathe > i {
+  animation: breathe 1.25s ease-in-out infinite;
+}
+.breathe > i:nth-child(2) {
+  animation-delay: 0.16s;
+}
+.breathe > i:nth-child(3) {
+  animation-delay: 0.32s;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rise,
+  .pop,
+  .caret::after,
+  .spinner,
+  .breathe > i {
+    animation: none !important;
+    opacity: 1;
+    transform: none;
+  }
+  *,
+  *::before,
+  *::after {
+    transition-duration: 1ms !important;
+  }
+}
+
+/* ===========================================================================
+   MARKDOWN — self-contained, no @tailwindcss/typography dependency.
+   ======================================================================== */
+.md {
+  font-size: 0.9375rem;
+  line-height: 1.72;
+  overflow-wrap: break-word;
+}
+.md > * + * {
+  margin-top: 0.9em;
+}
+.md > :first-child {
+  margin-top: 0;
+}
+
+.md h1,
+.md h2,
+.md h3,
+.md h4 {
+  font-weight: 600;
+  letter-spacing: -0.013em;
+  line-height: 1.32;
+}
+.md h1 {
+  font-size: 1.32em;
+}
+.md h2 {
+  font-size: 1.16em;
+}
+.md h3 {
+  font-size: 1.04em;
+}
+.md > * + h1,
+.md > * + h2,
+.md > * + h3 {
+  margin-top: 1.6em;
+}
+
+.md a {
+  color: var(--color-accent);
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+}
+.md a:hover {
+  color: var(--color-accent-hover);
+}
+.md strong {
+  font-weight: 600;
+}
+
+.md ul,
+.md ol {
+  padding-left: 1.3em;
+}
+.md ul {
+  list-style: disc;
+}
+.md ol {
+  list-style: decimal;
+}
+.md li + li {
+  margin-top: 0.35em;
+}
+.md li::marker {
+  color: var(--color-ink-subtle);
+}
+.md li > ul,
+.md li > ol {
+  margin-top: 0.35em;
+}
+
+.md blockquote {
+  border-left: 2px solid var(--color-line-strong);
+  padding-left: 0.95em;
+  color: var(--color-ink-muted);
+}
+
+.md hr {
+  border: 0;
+  border-top: 1px solid var(--color-line);
+  margin: 1.6em 0;
+}
+
+.md table {
+  display: block;
+  width: 100%;
+  overflow-x: auto;
+  border-collapse: collapse;
+  font-size: 0.88em;
+}
+.md th,
+.md td {
+  border: 1px solid var(--color-line);
+  padding: 0.45em 0.7em;
+  text-align: left;
+}
+.md th {
+  background: var(--color-surface);
+  font-weight: 600;
+}
+
+.md img {
+  max-width: 100%;
+  border-radius: 12px;
+}
+
+/* inline code */
+.md-code-inline {
+  font-family: var(--font-mono);
+  font-size: 0.86em;
+  background: var(--color-surface);
+  border: 1px solid var(--color-line);
+  border-radius: 5px;
+  padding: 0.12em 0.36em;
+}
+
+/* fenced block */
+.md-code-block {
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--color-inset);
+  border: 1px solid color-mix(in srgb, #ffffff 9%, transparent);
+}
+.md-code-block pre {
+  margin: 0;
+  padding: 0.85rem 1rem 1rem;
+  overflow-x: auto;
+  font-family: var(--font-mono);
+  font-size: 0.8125rem;
+  line-height: 1.65;
+  color: #d3dbe0;
+  tab-size: 2;
+}
+
+/* keyboard hint chips */
+.kbd {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  line-height: 1;
+  padding: 3px 5px;
+  border-radius: 4px;
+  border: 1px solid var(--color-line);
+  background: var(--color-surface);
+  color: var(--color-ink-muted);
+}
