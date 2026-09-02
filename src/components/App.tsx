@@ -3,7 +3,7 @@ import { Box, Text, useInput, useApp } from 'ink';
 import TextInput from 'ink-text-input';
 import Spinner from 'ink-spinner';
 import SelectInput from 'ink-select-input';
-import { getLocalClient, fetchLocalModels, Provider } from '../services/llm.js';
+import { getLocalClient, fetchLocalModels, Provider, DEFAULT_URLS } from '../services/llm.js';
 import { toolDefinitions, executeTool } from '../services/tools.js';
 import { SyntaxHighlighter } from './SyntaxHighlighter.js';
 import { loadConfig, saveConfig, LocusConfig } from '../core/config.js';
@@ -20,12 +20,12 @@ interface Message {
   rejected?: boolean; // true when a tool was denied by the user
 }
 
-type Step = 'SELECT_PROVIDER' | 'SELECT_MODEL' | 'SELECT_SESSION' | 'CHAT';
+type Step = 'SELECT_PROVIDER' | 'SELECT_URL' | 'SELECT_MODEL' | 'SELECT_SESSION' | 'CHAT';
 
 // ─── Available slash commands ────────────────────────────────────────────────────────────
 
 const SLASH_COMMANDS = [
-  { cmd: '/provider',  description: 'Switch the AI provider (Ollama / LM Studio)' },
+  { cmd: '/provider',  description: 'Switch the AI provider' },
   { cmd: '/model',     description: 'Switch the active model' },
   { cmd: '/sessions',  description: 'Browse and restore a previous chat session' },
   { cmd: '/whitelist', description: 'View or clear auto-approved tools' },
@@ -292,6 +292,8 @@ function SetupShell({
         <Text color="blackBright"> navigate   </Text>
         <Text dimColor>Enter</Text>
         <Text color="blackBright"> select   </Text>
+        <Text dimColor>Esc</Text>
+        <Text color="blackBright"> back   </Text>
         <Text dimColor>Ctrl+C</Text>
         <Text color="blackBright"> quit</Text>
       </Box>
@@ -305,6 +307,12 @@ function ProviderItem({ label, isSelected }: { label: string; isSelected?: boole
   const descriptions: Record<string, string> = {
     Ollama: 'Local models via ollama.ai',
     'LM Studio': 'Local models via lmstudio.ai',
+    LocalAI: 'Drop-in OpenAI replacement',
+    vLLM: 'High-throughput serving engine',
+    Jan: 'Offline AI desktop application',
+    GPT4All: 'CPU-optimized local ecosystem',
+    'Llama.cpp': 'Standalone C++ inference engine',
+    Oobabooga: 'Gradio web UI for LLMs',
   };
   return (
     <Box>
@@ -348,6 +356,7 @@ export function App({
   const hasDefaults = !!(initialProvider && initialModel);
   const [step, setStep] = useState<Step>(hasDefaults ? 'CHAT' : 'SELECT_PROVIDER');
   const [provider, setProvider] = useState<Provider>(initialProvider ?? 'ollama');
+  const [draftUrl, setDraftUrl] = useState<string>('');
   const [models, setModels] = useState<string[]>([]);
   const [selectedModel, setSelectedModel] = useState<string>(initialModel ?? '');
 
@@ -474,6 +483,19 @@ export function App({
         abortControllerRef.current = null;
       }
       return;
+    }
+
+    // Go back on setup screens
+    if (key.escape && !loading) {
+      if (step === 'SELECT_URL' || step === 'SELECT_MODEL') {
+        setErrorMsg(null);
+        setStep('SELECT_PROVIDER');
+        return;
+      } else if (step === 'SELECT_PROVIDER' && hasDefaults) {
+        setErrorMsg(null);
+        setStep('CHAT');
+        return;
+      }
     }
 
     // ── Session picker keyboard controls ──────────────────────────────────
@@ -632,7 +654,7 @@ export function App({
 
     // Ctrl+S — save current provider + model as default
     if (key.ctrl && input === 's' && step === 'CHAT' && selectedModel) {
-      const newConfig: LocusConfig = {
+      const newConfig: any = {
         ...(config ?? { autoApprove: [] }),
         defaultProvider: provider,
         defaultModel: selectedModel,
@@ -645,13 +667,25 @@ export function App({
   });
 
   // ── Provider selection ────────────────────────────────────────────────────
-  const handleSelectProvider = async (item: { value: Provider }) => {
+  const handleSelectProvider = (item: { value: Provider }) => {
     setProvider(item.value);
+    setDraftUrl(config?.baseURLs?.[item.value] || DEFAULT_URLS[item.value] || '');
+    setErrorMsg(null);
+    setStep('SELECT_URL');
+  };
+
+  const handleSelectUrlSubmit = async (url: string) => {
     setLoading(true);
     setErrorMsg(null);
     try {
-      const activeModels = await fetchLocalModels(item.value);
-      if (activeModels.length === 0) throw new Error('No running models found. Start your provider first.');
+      // Save it temporarily in config state so future calls use it
+      setConfig(prev => ({
+        ...(prev || { defaultProvider: 'ollama', defaultModel: '', autoApprove: [] }),
+        baseURLs: { ...(prev?.baseURLs || {}), [provider]: url }
+      }));
+      
+      const activeModels = await fetchLocalModels(provider, url);
+      if (activeModels.length === 0) throw new Error('No running models found at this URL.');
       setModels(activeModels);
       setStep('SELECT_MODEL');
     } catch (err: any) {
@@ -745,7 +779,7 @@ export function App({
         // Need to fetch models first if provider hasn't been connected yet
         setLoading(true);
         try {
-          const activeModels = await fetchLocalModels(provider, config?.baseURLs?.[provider]);
+          const activeModels = await fetchLocalModels(provider, config?.baseURLs?.[provider as any]);
           setModels(activeModels);
           setStep('SELECT_MODEL');
         } catch (err: any) {
@@ -1038,6 +1072,12 @@ export function App({
           items={[
             { label: 'Ollama', value: 'ollama' as Provider },
             { label: 'LM Studio', value: 'lmstudio' as Provider },
+            { label: 'LocalAI', value: 'localai' as Provider },
+            { label: 'vLLM', value: 'vllm' as Provider },
+            { label: 'Jan', value: 'jan' as Provider },
+            { label: 'GPT4All', value: 'gpt4all' as Provider },
+            { label: 'Llama.cpp', value: 'llamacpp' as Provider },
+            { label: 'Oobabooga', value: 'oobabooga' as Provider },
           ]}
           onSelect={handleSelectProvider}
           itemComponent={ProviderItem}
@@ -1047,6 +1087,26 @@ export function App({
   }
 
   // ── SCREEN: Model ────────────────────────────────────────────────────────
+  if (step === 'SELECT_URL') {
+    return (
+      <SetupShell
+        stepNum={1}
+        label="Confirm Base URL"
+        description="Press Enter to accept or type a custom port/URL"
+        error={errorMsg}
+        loading={loading}
+      >
+        <Box paddingLeft={2} borderStyle="round" borderColor={errorMsg ? "red" : "cyan"}>
+           <TextInput
+             value={draftUrl}
+             onChange={setDraftUrl}
+             onSubmit={handleSelectUrlSubmit}
+           />
+        </Box>
+      </SetupShell>
+    );
+  }
+
   if (step === 'SELECT_MODEL') {
     return (
       <SetupShell

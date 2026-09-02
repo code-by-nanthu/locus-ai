@@ -1,10 +1,16 @@
 import OpenAI from 'openai';
 
-export type Provider = 'ollama' | 'lmstudio';
+export type Provider = 'ollama' | 'lmstudio' | 'localai' | 'vllm' | 'jan' | 'gpt4all' | 'llamacpp' | 'oobabooga';
 
-const DEFAULT_URLS: Record<Provider, string> = {
-  ollama:   'http://localhost:11434/v1',
-  lmstudio: 'http://localhost:1234/v1',
+export const DEFAULT_URLS: Record<Provider, string> = {
+  ollama:    'http://localhost:11434/v1',
+  lmstudio:  'http://localhost:1234/v1',
+  localai:   'http://localhost:8080/v1',
+  vllm:      'http://localhost:8000/v1',
+  jan:       'http://localhost:1337/v1',
+  gpt4all:   'http://localhost:4891/v1',
+  llamacpp:  'http://localhost:8080/v1',
+  oobabooga: 'http://localhost:5000/v1',
 };
 
 /**

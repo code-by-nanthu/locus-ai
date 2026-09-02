@@ -112,6 +112,9 @@ const FALLBACK_SUGGESTIONS = [
     try {
       if (req.body.defaultProvider) config.defaultProvider = req.body.defaultProvider;
       if (req.body.defaultModel) config.defaultModel = req.body.defaultModel;
+      if (req.body.baseURLs) {
+        config.baseURLs = { ...(config.baseURLs || {}), ...req.body.baseURLs };
+      }
       await saveConfig(config as LocusConfig);
       res.json({ success: true });
     } catch (e) {
@@ -122,7 +125,7 @@ const FALLBACK_SUGGESTIONS = [
   app.get('/api/models', async (req, res) => {
     try {
       const provider = (req.query.provider as string) || config.defaultProvider;
-      const baseURL = config.baseURLs?.[provider as 'ollama' | 'lmstudio'];
+      const baseURL = (req.query.baseUrl as string) || config.baseURLs?.[provider as any];
       const models = await fetchLocalModels(provider as any, baseURL);
       res.json(models);
     } catch (e: any) {

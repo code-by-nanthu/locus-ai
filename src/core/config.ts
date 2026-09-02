@@ -5,15 +5,12 @@ import * as os from 'os';
 // ── Config schema ──────────────────────────────────────────────────────────────
 
 export interface LocusConfig {
-  defaultProvider: 'ollama' | 'lmstudio';
+  defaultProvider: 'ollama' | 'lmstudio' | 'localai' | 'vllm' | 'jan' | 'gpt4all' | 'llamacpp' | 'oobabooga';
   defaultModel: string;
   /** Tools that are auto-approved without Y/N prompt (Phase 2) */
   autoApprove: string[];
   /** Custom base URLs per provider (overrides hardcoded localhost defaults) */
-  baseURLs?: {
-    ollama?: string;
-    lmstudio?: string;
-  };
+  baseURLs?: Record<string, string>;
 }
 
 // ── File paths ─────────────────────────────────────────────────────────────────

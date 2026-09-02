@@ -11,6 +11,17 @@ function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
+const PROVIDERS = {
+  ollama:    { label: 'Ollama', defaultUrl: 'http://localhost:11434/v1' },
+  lmstudio:  { label: 'LM Studio', defaultUrl: 'http://localhost:1234/v1' },
+  localai:   { label: 'LocalAI', defaultUrl: 'http://localhost:8080/v1' },
+  vllm:      { label: 'vLLM', defaultUrl: 'http://localhost:8000/v1' },
+  jan:       { label: 'Jan', defaultUrl: 'http://localhost:1337/v1' },
+  gpt4all:   { label: 'GPT4All', defaultUrl: 'http://localhost:4891/v1' },
+  llamacpp:  { label: 'Llama.cpp', defaultUrl: 'http://localhost:8080/v1' },
+  oobabooga: { label: 'Oobabooga', defaultUrl: 'http://localhost:5000/v1' },
+};
+
 // Types
 type Session = {
   id: string;
@@ -64,11 +75,12 @@ export default function App() {
   // Approval state
 
   // Config / Models state
-  const [config, setConfig] = useState<{ defaultProvider: string; defaultModel: string } | null>(null);
+  const [config, setConfig] = useState<{ defaultProvider: string; defaultModel: string; baseURLs?: Record<string, string> } | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [availableModels, setAvailableModels] = useState<string[]>([]);
-  const [modalProvider, setModalProvider] = useState<'ollama' | 'lmstudio'>('ollama');
+  const [modalProvider, setModalProvider] = useState<string>('ollama');
   const [modalModel, setModalModel] = useState('');
+  const [modalBaseUrl, setModalBaseUrl] = useState('');
   const [isSavingConfig, setIsSavingConfig] = useState(false);
 
   const loadConfig = async () => {
@@ -85,9 +97,10 @@ export default function App() {
     loadConfig();
   }, []);
 
-  const fetchModels = async (provider: string) => {
+  const fetchModels = async (provider: string, baseUrl?: string) => {
     try {
-      const res = await fetch(`/api/models?provider=${provider}`);
+      const urlParam = baseUrl ? `&baseUrl=${encodeURIComponent(baseUrl)}` : '';
+      const res = await fetch(`/api/models?provider=${provider}${urlParam}`);
       if (!res.ok) throw new Error(await res.text());
       const data = await res.json();
       setAvailableModels(data || []);
@@ -101,10 +114,12 @@ export default function App() {
   };
 
   const openSettings = () => {
-    setModalProvider(config?.defaultProvider as any || 'ollama');
+    const prov = config?.defaultProvider || 'ollama';
+    setModalProvider(prov);
     setModalModel(config?.defaultModel || '');
+    setModalBaseUrl(config?.baseURLs?.[prov] || (PROVIDERS as any)[prov]?.defaultUrl || '');
     setSettingsOpen(true);
-    fetchModels(config?.defaultProvider || 'ollama');
+    fetchModels(prov, config?.baseURLs?.[prov]);
   };
 
   const saveSettings = async () => {
@@ -113,7 +128,7 @@ export default function App() {
       await fetch('/api/config', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ defaultProvider: modalProvider, defaultModel: modalModel })
+        body: JSON.stringify({ defaultProvider: modalProvider, defaultModel: modalModel, baseURLs: { [modalProvider]: modalBaseUrl } })
       });
       await loadConfig();
       setSettingsOpen(false);
@@ -752,16 +767,43 @@ export default function App() {
                   <select 
                     value={modalProvider}
                     onChange={(e) => {
-                      setModalProvider(e.target.value as any);
-                      fetchModels(e.target.value);
+                      const p = e.target.value;
+                      setModalProvider(p);
+                      setModalBaseUrl((PROVIDERS as any)[p]?.defaultUrl || '');
+                      fetchModels(p);
                     }}
                     className="w-full h-10 pl-3 pr-9 rounded-xl bg-surface border border-line focus:border-accent focus:ring-4 focus:ring-accent/15 outline-none text-[14px] text-ink appearance-none cursor-pointer"
                   >
-                    <option value="ollama">Ollama</option>
-                    <option value="lmstudio">LM Studio</option>
+                    {Object.entries(PROVIDERS).map(([key, data]) => (
+                      <option key={key} value={key}>{data.label}</option>
+                    ))}
                   </select>
                   <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-ink-subtle pointer-events-none" />
                 </div>
+                </div>
+
+                <div>
+                  <label className="block text-[13px] font-medium text-ink mb-1.5 flex justify-between">
+                    <span>Base URL (Port)</span>
+                    <button 
+                      className="text-accent hover:underline text-xs"
+                      onClick={() => {
+                        fetchModels(modalProvider, modalBaseUrl);
+                      }}
+                      title="Refresh models"
+                    >
+                      Refresh
+                    </button>
+                  </label>
+                  <input
+                    type="text"
+                    value={modalBaseUrl}
+                    onChange={(e) => setModalBaseUrl(e.target.value)}
+                    onBlur={(e) => fetchModels(modalProvider, e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Enter') fetchModels(modalProvider, modalBaseUrl); }}
+                    className="w-full h-10 px-3 rounded-xl bg-surface border border-line focus:border-accent focus:ring-4 focus:ring-accent/15 outline-none text-[14px] text-ink font-mono"
+                    placeholder="http://localhost:..."
+                  />
                 </div>
 
                 <div>
