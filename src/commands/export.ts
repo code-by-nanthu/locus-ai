@@ -32,12 +32,18 @@ export async function runExportCommand(sessionId?: string) {
   mdContent += `---\n\n`;
 
   for (const msg of session.messages) {
-    if (msg.role === 'user') {
-      mdContent += `### 👤 You\n\n${msg.content}\n\n`;
-    } else if (msg.role === 'assistant' && msg.content) {
-      mdContent += `### 🤖 Assistant\n\n${msg.content}\n\n`;
-    } else if (msg.role === 'tool') {
-      mdContent += `**[Tool Executed]** \`${msg.name}\`\n\n\`\`\`json\n${msg.content}\n\`\`\`\n\n`;
+    switch (msg.role) {
+      case 'user':
+        mdContent += `### 👤 You\n\n${msg.content}\n\n`;
+        break;
+      case 'assistant':
+        if (msg.content) {
+          mdContent += `### 🤖 Assistant\n\n${msg.content}\n\n`;
+        }
+        break;
+      case 'tool':
+        mdContent += `**[Tool Executed]** \`${msg.name}\`\n\n\`\`\`json\n${msg.content}\n\`\`\`\n\n`;
+        break;
     }
   }
 

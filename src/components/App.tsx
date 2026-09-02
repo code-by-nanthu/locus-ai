@@ -463,14 +463,18 @@ export function App({
 
     // Go back on setup screens
     if (key.escape && !loading) {
-      if (step === 'SELECT_URL' || step === 'SELECT_MODEL') {
-        setErrorMsg(null);
-        setStep('SELECT_PROVIDER');
-        return;
-      } else if (step === 'SELECT_PROVIDER' && hasDefaults) {
-        setErrorMsg(null);
-        setStep('CHAT');
-        return;
+      switch (step) {
+        case 'SELECT_URL':
+        case 'SELECT_MODEL':
+          setErrorMsg(null);
+          setStep('SELECT_PROVIDER');
+          return;
+        case 'SELECT_PROVIDER':
+          if (hasDefaults) {
+            setErrorMsg(null);
+            setStep('CHAT');
+          }
+          return;
       }
     }
 
@@ -1219,19 +1223,17 @@ export function App({
         )}
 
         {history.map((msg, idx) => {
-          if (msg.role === 'tool') {
-            return <ToolEntry key={idx} name={msg.name} content={msg.content} rejected={msg.rejected} />;
+          switch (msg.role) {
+            case 'tool':
+              return <ToolEntry key={idx} name={msg.name} content={msg.content} rejected={msg.rejected} />;
+            case 'user':
+              return msg.content ? <UserMessage key={idx} content={msg.content} timestamp={msg.timestamp} /> : null;
+            case 'assistant':
+              // Skip tool-call wrapper messages with no text
+              return msg.content?.trim() ? <AgentMessage key={idx} content={msg.content} timestamp={msg.timestamp} /> : null;
+            default:
+              return null;
           }
-          // Skip tool-call wrapper messages with no text
-          if (msg.role === 'assistant' && (!msg.content || msg.content.trim() === '') && msg.tool_calls) {
-            return null;
-          }
-          if (!msg.content) return null;
-
-          if (msg.role === 'user') {
-            return <UserMessage key={idx} content={msg.content} timestamp={msg.timestamp} />;
-          }
-          return <AgentMessage key={idx} content={msg.content} timestamp={msg.timestamp} />;
         })}
 
         {/* Live stream */}
