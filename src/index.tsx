@@ -4,6 +4,8 @@ import { render } from 'ink';
 import { App } from './components/App.js';
 import { loadSession, listSessions, listSessionsDetail } from './core/session.js';
 import { loadConfig } from './core/config.js';
+import { runCommitCommand } from './commands/commit.js';
+import { runExportCommand } from './commands/export.js';
 
 async function main() {
   const args = process.argv.slice(2);
@@ -34,6 +36,19 @@ async function main() {
     }
     console.log('\n  Resume a session: pnpm start -- --session <ID>\n');
     process.exit(0);
+  }
+
+  // ── locus commit ───────────────────────────────────────────────────────────
+  if (args[0] === 'commit') {
+    await runCommitCommand();
+    return;
+  }
+
+  // ── locus export [id] ──────────────────────────────────────────────────────
+  if (args[0] === 'export') {
+    const sessionId = args[1]; // optional
+    await runExportCommand(sessionId);
+    return;
   }
 
   // Load saved config (if any)
