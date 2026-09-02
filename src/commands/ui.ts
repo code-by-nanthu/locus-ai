@@ -3,9 +3,9 @@ import * as path from 'path';
 import open from 'open';
 import { fileURLToPath } from 'url';
 import { loadConfig, saveConfig, LocusConfig } from '../core/config.js';
-import { getLocalClient } from '../services/llm.js';
+import { getLocalClient, fetchLocalModels } from '../services/llm.js';
 import { executeTool } from '../services/tools.js';
-import { generateSessionId, saveSession, listSessionsDetail, loadSession } from '../core/session.js';
+import { generateSessionId, saveSession, listSessionsDetail, loadSession, deleteSession, renameSession } from '../core/session.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -43,6 +43,51 @@ export async function runUiCommand() {
       else res.status(404).json({ error: 'Not found' });
     } catch (e) {
       res.status(500).json({ error: 'Failed to load session' });
+    }
+  });
+
+  app.delete('/api/session/:id', async (req, res) => {
+    try {
+      await deleteSession(req.params.id);
+      res.json({ success: true });
+    } catch (e) {
+      res.status(500).json({ error: 'Failed to delete session' });
+    }
+  });
+
+  app.put('/api/session/:id', async (req, res) => {
+    try {
+      const { title } = req.body;
+      await renameSession(req.params.id, title);
+      res.json({ success: true });
+    } catch (e) {
+      res.status(500).json({ error: 'Failed to rename session' });
+    }
+  });
+
+  app.get('/api/config', (req, res) => {
+    res.json(config);
+  });
+
+  app.post('/api/config', async (req, res) => {
+    try {
+      if (req.body.defaultProvider) config.defaultProvider = req.body.defaultProvider;
+      if (req.body.defaultModel) config.defaultModel = req.body.defaultModel;
+      await saveConfig(config as LocusConfig);
+      res.json({ success: true });
+    } catch (e) {
+      res.status(500).json({ error: 'Failed to save config' });
+    }
+  });
+
+  app.get('/api/models', async (req, res) => {
+    try {
+      const provider = (req.query.provider as string) || config.defaultProvider;
+      const baseURL = config.baseURLs?.[provider as 'ollama' | 'lmstudio'];
+      const models = await fetchLocalModels(provider as any, baseURL);
+      res.json(models);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
     }
   });
 

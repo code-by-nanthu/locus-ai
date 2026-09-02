@@ -16,6 +16,7 @@ export interface SessionMessage {
 
 export interface SessionFile {
   id: string;
+  title?: string;
   provider: string;
   model: string;
   createdAt: string;
@@ -91,6 +92,17 @@ export async function deleteSession(id: string): Promise<void> {
 }
 
 /**
+ * Renames a session by ID.
+ */
+export async function renameSession(id: string, title: string): Promise<void> {
+  const session = await loadSession(id);
+  if (session) {
+    session.title = title;
+    await fs.writeFile(getSessionPath(id), JSON.stringify(session, null, 2), 'utf-8');
+  }
+}
+
+/**
  * Returns all saved session IDs sorted by most recent first.
  */
 export async function listSessions(): Promise<string[]> {
@@ -109,6 +121,7 @@ export async function listSessions(): Promise<string[]> {
 
 export interface SessionSummary {
   id: string;
+  title?: string;
   provider: string;
   model: string;
   createdAt: string;
@@ -129,6 +142,7 @@ export async function listSessionsDetail(): Promise<SessionSummary[]> {
       const session = JSON.parse(raw) as SessionFile;
       summaries.push({
         id,
+        title: session.title,
         provider: session.provider,
         model: session.model,
         createdAt: session.createdAt,

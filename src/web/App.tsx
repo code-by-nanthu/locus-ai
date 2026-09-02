@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, type ReactNode } from 'react';
 import {
   Menu, Plus, ArrowUp, Terminal, AlertTriangle, Sun, Moon, Bot,
-  Copy, Check, ChevronRight, XCircle, CheckCircle2, MessageSquare
+  Copy, Check, ChevronRight, ChevronDown, XCircle, CheckCircle2, MessageSquare, Trash2, Settings, Server, Pencil
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import { clsx, type ClassValue } from 'clsx';
@@ -14,6 +14,7 @@ function cn(...inputs: ClassValue[]) {
 // Types
 type Session = {
   id: string;
+  title?: string;
   createdAt: string;
   turns: number;
 };
@@ -61,6 +62,99 @@ export default function App() {
   const [streamingTool, setStreamingTool] = useState<{ name: string, args: string, error?: boolean, result?: string } | null>(null);
 
   // Approval state
+
+  // Config / Models state
+  const [config, setConfig] = useState<{ defaultProvider: string; defaultModel: string } | null>(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [availableModels, setAvailableModels] = useState<string[]>([]);
+  const [modalProvider, setModalProvider] = useState<'ollama' | 'lmstudio'>('ollama');
+  const [modalModel, setModalModel] = useState('');
+  const [isSavingConfig, setIsSavingConfig] = useState(false);
+
+  const loadConfig = async () => {
+    try {
+      const res = await fetch('/api/config');
+      const data = await res.json();
+      setConfig(data);
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  useEffect(() => {
+    loadConfig();
+  }, []);
+
+  const fetchModels = async (provider: string) => {
+    try {
+      const res = await fetch(`/api/models?provider=${provider}`);
+      if (!res.ok) throw new Error(await res.text());
+      const data = await res.json();
+      setAvailableModels(data || []);
+      if (data && data.length > 0 && !data.includes(modalModel)) {
+        setModalModel(data[0]);
+      }
+    } catch (e) {
+      console.error('Failed to fetch models', e);
+      setAvailableModels([]);
+    }
+  };
+
+  const openSettings = () => {
+    setModalProvider(config?.defaultProvider as any || 'ollama');
+    setModalModel(config?.defaultModel || '');
+    setSettingsOpen(true);
+    fetchModels(config?.defaultProvider || 'ollama');
+  };
+
+  const saveSettings = async () => {
+    setIsSavingConfig(true);
+    try {
+      await fetch('/api/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ defaultProvider: modalProvider, defaultModel: modalModel })
+      });
+      await loadConfig();
+      setSettingsOpen(false);
+    } catch (e) {
+      console.error(e);
+    }
+    setIsSavingConfig(false);
+  };
+
+
+  // Session Renaming state
+  const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
+  const [editSessionTitle, setEditSessionTitle] = useState('');
+
+  const renameSession = async (id: string, title: string) => {
+    try {
+      await fetch(`/api/session/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: title.trim() })
+      });
+      loadSessions();
+      setEditingSessionId(null);
+    } catch (e) {
+      console.error('Failed to rename session', e);
+    }
+  };
+
+  const deleteSessionItem = async (e: React.MouseEvent, id: string) => {
+    e.stopPropagation();
+    try {
+      await fetch(`/api/session/${id}`, { method: 'DELETE' });
+      if (currentSessionId === id) {
+        startNewSession();
+      }
+      loadSessions();
+    } catch (e) {
+      console.error('Failed to delete session', e);
+    }
+  };
+
   const [approvalReq, setApprovalReq] = useState<{
     authId: string;
     toolName: string;
@@ -292,34 +386,82 @@ export default function App() {
                     {group.label}
                   </div>
                   {group.items.map(s => (
-                    <button
+                    <div
                       key={s.id}
-                      onClick={() => loadSession(s.id)}
                       className={cn(
-                        "group relative w-full text-left h-11 px-3 rounded-lg flex items-center justify-between gap-3 transition-colors",
+                        "group relative w-full h-11 pl-3 pr-1.5 rounded-lg flex items-center justify-between gap-1 transition-colors",
                         s.id === currentSessionId
                           ? "bg-accent-soft"
                           : "hover:bg-raised"
                       )}
                     >
-                      {s.id === currentSessionId && (
-                        <span className="absolute left-0 top-2.5 bottom-2.5 w-[2px] rounded-r bg-accent" />
+                      {editingSessionId === s.id ? (
+                        <div className="flex-1 min-w-0 h-full flex items-center">
+                          <input
+                            autoFocus
+                            type="text"
+                            value={editSessionTitle}
+                            onChange={(e) => setEditSessionTitle(e.target.value)}
+                            onBlur={() => renameSession(s.id, editSessionTitle)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') renameSession(s.id, editSessionTitle);
+                              if (e.key === 'Escape') setEditingSessionId(null);
+                            }}
+                            className="w-full h-7 px-2 text-[13px] font-medium bg-surface border border-accent rounded-md outline-none focus:ring-2 focus:ring-accent/20"
+                            placeholder="Chat name"
+                          />
+                        </div>
+                      ) : (
+                        <button
+                          onClick={() => loadSession(s.id)}
+                          className="flex-1 min-w-0 text-left flex items-center justify-between gap-3 h-full"
+                        >
+                          {s.id === currentSessionId && (
+                            <span className="absolute left-0 top-2.5 bottom-2.5 w-[2px] rounded-r bg-accent" />
+                          )}
+                          <span className="min-w-0 flex-1">
+                            <span className={cn(
+                              "block text-[13px] font-medium truncate",
+                              s.id === currentSessionId ? "text-ink" : "text-ink-muted group-hover:text-ink"
+                            )}>
+                              {s.title || `Chat ${s.id.slice(-6)}`}
+                            </span>
+                            <span className="block text-[11px] text-ink-subtle truncate">
+                              {formatTime(s.createdAt)}
+                            </span>
+                          </span>
+                          <span className="shrink-0 text-[11px] font-mono tabular-nums text-ink-subtle mr-1">
+                            {s.turns}
+                          </span>
+                        </button>
                       )}
-                      <span className="min-w-0">
-                        <span className={cn(
-                          "block text-[13px] font-medium truncate",
-                          s.id === currentSessionId ? "text-ink" : "text-ink-muted group-hover:text-ink"
+
+                      {editingSessionId !== s.id && (
+                        <div className={cn(
+                          "shrink-0 flex items-center transition-opacity",
+                          s.id === currentSessionId ? "opacity-100" : "opacity-0 group-hover:opacity-100"
                         )}>
-                          Chat {s.id.slice(-6)}
-                        </span>
-                        <span className="block text-[11px] text-ink-subtle">
-                          {formatTime(s.createdAt)}
-                        </span>
-                      </span>
-                      <span className="shrink-0 text-[11px] font-mono tabular-nums text-ink-subtle">
-                        {s.turns}
-                      </span>
-                    </button>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setEditSessionTitle(s.title || `Chat ${s.id.slice(-6)}`);
+                              setEditingSessionId(s.id);
+                            }}
+                            className="h-7 w-7 inline-flex items-center justify-center rounded-md text-ink-subtle hover:text-ink hover:bg-surface transition-colors"
+                            title="Rename chat"
+                          >
+                            <Pencil size={13} />
+                          </button>
+                          <button
+                            onClick={(e) => deleteSessionItem(e, s.id)}
+                            className="h-7 w-7 inline-flex items-center justify-center rounded-md text-ink-subtle hover:text-danger hover:bg-danger-soft transition-colors"
+                            title="Delete chat"
+                          >
+                            <Trash2 size={13} />
+                          </button>
+                        </div>
+                      )}
+                    </div>
                   ))}
                 </div>
               ))
@@ -385,6 +527,14 @@ export default function App() {
                 Working
               </span>
             )}
+            <button
+              onClick={openSettings}
+              className="hidden sm:inline-flex items-center gap-1.5 h-9 px-3 mr-1 rounded-lg text-[13px] font-medium bg-surface-2 hover:bg-surface border border-line hover:border-line-strong transition-colors text-ink-muted hover:text-ink"
+              title="Settings"
+            >
+              <Server size={14} className="text-accent" />
+              <span className="max-w-[100px] truncate">{config?.defaultModel || 'Settings'}</span>
+            </button>
             <IconButton label="New chat" onClick={startNewSession}>
               <Plus size={18} />
             </IconButton>
@@ -551,6 +701,92 @@ export default function App() {
           </div>
         </div>
       )}
+
+      {/* ───────────────────────── Settings dialog ───────────────────────── */}
+      {settingsOpen && (
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center sm:p-4 bg-black/45 dark:bg-black/65 backdrop-blur-[3px]">
+          <div
+            role="dialog"
+            aria-modal="true"
+            className="pop w-full sm:max-w-md bg-raised border border-line rounded-t-2xl sm:rounded-2xl shadow-panel overflow-hidden"
+          >
+            <div className="p-5 sm:p-6 pb-4">
+              <div className="flex items-center gap-3 mb-5">
+                <span className="h-9 w-9 shrink-0 rounded-lg bg-accent-soft border border-accent-line flex items-center justify-center">
+                  <Settings size={17} className="text-accent" />
+                </span>
+                <h2 className="text-[17px] font-semibold tracking-tight">
+                  Model Settings
+                </h2>
+              </div>
+
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-[13px] font-medium text-ink mb-1.5">Provider</label>
+                <div className="relative">
+                  <select 
+                    value={modalProvider}
+                    onChange={(e) => {
+                      setModalProvider(e.target.value as any);
+                      fetchModels(e.target.value);
+                    }}
+                    className="w-full h-10 pl-3 pr-9 rounded-xl bg-surface border border-line focus:border-accent focus:ring-4 focus:ring-accent/15 outline-none text-[14px] text-ink appearance-none cursor-pointer"
+                  >
+                    <option value="ollama">Ollama</option>
+                    <option value="lmstudio">LM Studio</option>
+                  </select>
+                  <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-ink-subtle pointer-events-none" />
+                </div>
+                </div>
+
+                <div>
+                  <label className="block text-[13px] font-medium text-ink mb-1.5">Model</label>
+                <div className="relative">
+                  <select
+                    value={modalModel}
+                    onChange={(e) => setModalModel(e.target.value)}
+                    className="w-full h-10 pl-3 pr-9 rounded-xl bg-surface border border-line focus:border-accent focus:ring-4 focus:ring-accent/15 outline-none text-[14px] text-ink disabled:opacity-50 appearance-none cursor-pointer"
+                    disabled={availableModels.length === 0}
+                  >
+                    {availableModels.length === 0 && (
+                      <option value="">No models found...</option>
+                    )}
+                    {availableModels.map(m => (
+                      <option key={m} value={m}>{m}</option>
+                    ))}
+                  </select>
+                  <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-ink-subtle pointer-events-none" />
+                </div>
+                  {availableModels.length === 0 && (
+                    <p className="mt-2 text-xs text-warn flex items-center gap-1.5">
+                      <AlertTriangle size={12} />
+                      Make sure {modalProvider === 'ollama' ? 'Ollama' : 'LM Studio'} is running locally.
+                    </p>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            <div className="px-5 sm:px-6 py-4 border-t border-line bg-surface/60 flex flex-col-reverse sm:flex-row sm:justify-end gap-2">
+              <button
+                onClick={() => setSettingsOpen(false)}
+                className="h-9 px-4 rounded-lg text-sm font-medium text-ink-muted hover:text-ink hover:bg-raised transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={saveSettings}
+                disabled={isSavingConfig || !modalModel}
+                className="h-9 px-4 rounded-lg text-sm font-medium bg-accent text-accent-ink hover:bg-accent-hover transition-colors disabled:opacity-50 flex items-center gap-2"
+              >
+                {isSavingConfig && <span className="ring-spin h-3.5 w-3.5 border-accent-ink border-t-transparent" />}
+                Save changes
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }
