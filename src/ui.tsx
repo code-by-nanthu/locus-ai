@@ -6,6 +6,8 @@ import SelectInput from 'ink-select-input';
 import { getLocalClient, fetchLocalModels, Provider } from './llm.js';
 import { toolDefinitions, executeTool } from './tools.js';
 import { SyntaxHighlighter } from './SyntaxHighlighter.js';
+import { loadConfig, saveConfig, LocusConfig } from './config.js';
+import { generateSessionId, saveSession, listSessionsDetail, loadSession, deleteSession, SessionSummary } from './session.js';
 
 interface Message {
   role: 'user' | 'assistant' | 'tool';
@@ -17,7 +19,15 @@ interface Message {
   rejected?: boolean; // true when a tool was denied by the user
 }
 
-type Step = 'SELECT_PROVIDER' | 'SELECT_MODEL' | 'CHAT';
+type Step = 'SELECT_PROVIDER' | 'SELECT_MODEL' | 'SELECT_SESSION' | 'CHAT';
+
+// ─── Available slash commands ────────────────────────────────────────────────────────────
+
+const SLASH_COMMANDS = [
+  { cmd: '/provider',  description: 'Switch the AI provider (Ollama / LM Studio)' },
+  { cmd: '/model',     description: 'Switch the active model' },
+  { cmd: '/sessions',  description: 'Browse and restore a previous chat session' },
+] as const;
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -387,19 +397,52 @@ function ModelItem({ label, isSelected }: { label: string; isSelected?: boolean 
 
 // ─── Main App ─────────────────────────────────────────────────────────────────
 
-export function App() {
+interface AppProps {
+  config: LocusConfig | null;
+  initialHistory: Message[];
+  initialProvider: Provider | null;
+  initialModel: string | null;
+  initialSessionId?: string | null;
+}
+
+export function App({
+  config,
+  initialHistory = [],
+  initialProvider = null,
+  initialModel = null,
+  initialSessionId = null,
+}: AppProps) {
   const { exit } = useApp();
-  const [step, setStep] = useState<Step>('SELECT_PROVIDER');
-  const [provider, setProvider] = useState<Provider>('ollama');
+
+  // If config has defaults, skip the setup wizard entirely
+  const hasDefaults = !!(initialProvider && initialModel);
+  const [step, setStep] = useState<Step>(hasDefaults ? 'CHAT' : 'SELECT_PROVIDER');
+  const [provider, setProvider] = useState<Provider>(initialProvider ?? 'ollama');
   const [models, setModels] = useState<string[]>([]);
-  const [selectedModel, setSelectedModel] = useState<string>('');
+  const [selectedModel, setSelectedModel] = useState<string>(initialModel ?? '');
 
   const [query, setQuery] = useState('');
-  const [history, setHistory] = useState<Message[]>([]);
+  const [history, setHistory] = useState<Message[]>(initialHistory);
   const [currentStream, setCurrentStream] = useState('');
   const [loading, setLoading] = useState(false);
   const [agentStatus, setAgentStatus] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  // Brief header confirmation after Ctrl+S save
+  const [saveConfirmation, setSaveConfirmation] = useState(false);
+
+  // Command palette: which item is highlighted (-1 = none)
+  const [cmdPickerIndex, setCmdPickerIndex] = useState(-1);
+
+  // Session picker focused index and delete confirmation
+  const [sessionPickerIndex, setSessionPickerIndex] = useState(0);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+
+  // Session picker list (populated when user types /sessions)
+  const [sessionList, setSessionList] = useState<SessionSummary[]>([]);
+
+  // Stable session ID for this run — seeded from prop if restoring, else generated on first message
+  const sessionIdRef = useRef<string | null>(initialSessionId ?? null);
 
   const abortControllerRef = useRef<AbortController | null>(null);
 
@@ -502,8 +545,110 @@ export function App() {
       return;
     }
 
+    // ── Session picker keyboard controls ──────────────────────────────────
+    if (step === 'SELECT_SESSION' && !loading) {
+      const total = sessionList.length + 1; // +1 for "new session" row
+
+      if (key.escape) {
+        if (confirmDelete) { setConfirmDelete(false); return; }
+        setSessionPickerIndex(0);
+        setStep('CHAT');
+        return;
+      }
+      if (key.upArrow) {
+        setConfirmDelete(false);
+        setSessionPickerIndex(i => (i <= 0 ? total - 1 : i - 1));
+        return;
+      }
+      if (key.downArrow) {
+        setConfirmDelete(false);
+        setSessionPickerIndex(i => (i >= total - 1 ? 0 : i + 1));
+        return;
+      }
+      if (key.return) {
+        // Handled async in the screen block via doSelectSession — trigger via a temp state flag
+        // Instead, we read focusedId from allItems inline here
+        const allItems = [
+          ...sessionList.map(s => ({ id: s.id })),
+          { id: '__new__' },
+        ];
+        const focusedId = allItems[sessionPickerIndex]?.id ?? '__new__';
+        if (confirmDelete) {
+          // Second Enter also confirms delete
+          (async () => {
+            if (focusedId !== '__new__') {
+              await deleteSession(focusedId);
+              const updated = await listSessionsDetail();
+              setSessionList(updated);
+              setSessionPickerIndex(i => Math.min(i, Math.max(0, updated.length - 1)));
+              setConfirmDelete(false);
+            }
+          })();
+          return;
+        }
+        // Load and restore the selected session
+        (async () => {
+          if (focusedId === '__new__') {
+            setHistory([]); sessionIdRef.current = null;
+            setSessionPickerIndex(0); setStep('CHAT');
+            return;
+          }
+          setLoading(true);
+          try {
+            const session = await loadSession(focusedId);
+            if (session) { setHistory(session.messages as Message[]); sessionIdRef.current = focusedId; }
+          } catch { setErrorMsg('Failed to load session.'); }
+          finally { setLoading(false); setSessionPickerIndex(0); setConfirmDelete(false); setStep('CHAT'); }
+        })();
+        return;
+      }
+      // D key — delete with confirmation
+      if (input.toLowerCase() === 'd') {
+        const allItems = [...sessionList.map(s => ({ id: s.id })), { id: '__new__' }];
+        const focusedId = allItems[sessionPickerIndex]?.id;
+        if (!focusedId || focusedId === '__new__') return;
+        if (confirmDelete) {
+          // Second D confirms
+          (async () => {
+            await deleteSession(focusedId);
+            const updated = await listSessionsDetail();
+            setSessionList(updated);
+            setSessionPickerIndex(i => Math.min(i, Math.max(0, updated.length - 1)));
+            setConfirmDelete(false);
+          })();
+        } else {
+          setConfirmDelete(true);
+        }
+        return;
+      }
+      return; // swallow all other keys on this screen
+    }
+
     // Input history navigation (only when active in chat)
     if (step === 'CHAT' && !loading && !pendingApproval) {
+      // Command palette navigation when query starts with '/'
+      const paletteMatches = query.startsWith('/')
+        ? SLASH_COMMANDS.filter(c => c.cmd.startsWith(query.trim().toLowerCase()))
+        : [];
+
+      if (paletteMatches.length > 0) {
+        if (key.upArrow) {
+          setCmdPickerIndex(i => (i <= 0 ? paletteMatches.length - 1 : i - 1));
+          return;
+        }
+        if (key.downArrow) {
+          setCmdPickerIndex(i => (i >= paletteMatches.length - 1 ? 0 : i + 1));
+          return;
+        }
+        // Tab auto-completes the highlighted (or first) item
+        if (key.tab) {
+          const picked = paletteMatches[cmdPickerIndex >= 0 ? cmdPickerIndex : 0];
+          setQuery(picked.cmd);
+          setCmdPickerIndex(-1);
+          return;
+        }
+      }
+
       if (key.upArrow) {
         if (inputHistory.length === 0) return;
         let newIndex = historyIndex;
@@ -551,6 +696,19 @@ export function App() {
     if (key.ctrl && input === 'n') {
       if (models.length > 0) { setErrorMsg(null); setStep('SELECT_MODEL'); }
       else setErrorMsg('No provider connected. Use Ctrl+P first.');
+    }
+
+    // Ctrl+S — save current provider + model as default
+    if (key.ctrl && input === 's' && step === 'CHAT' && selectedModel) {
+      const newConfig: LocusConfig = {
+        ...(config ?? { autoApprove: [] }),
+        defaultProvider: provider,
+        defaultModel: selectedModel,
+      };
+      saveConfig(newConfig).then(() => {
+        setSaveConfirmation(true);
+        setTimeout(() => setSaveConfirmation(false), 2000);
+      });
     }
   });
 
@@ -616,6 +774,63 @@ export function App() {
     // CRITICAL: Must check loading state immediately on entry to short-circuit race conditions
     if (!query.trim() || loading) return;
 
+    // ── Slash commands ────────────────────────────────────────────────────
+    // If palette is open and an item is highlighted, Enter picks it
+    const paletteMatches = query.startsWith('/')
+      ? SLASH_COMMANDS.filter(c => c.cmd.startsWith(query.trim().toLowerCase()))
+      : [];
+    if (paletteMatches.length > 0 && cmdPickerIndex >= 0) {
+      setQuery(paletteMatches[cmdPickerIndex].cmd);
+      setCmdPickerIndex(-1);
+      return; // let the user confirm with a second Enter
+    }
+
+    const cmd = query.trim().toLowerCase();
+
+    if (cmd === '/provider') {
+      setQuery('');
+      setErrorMsg(null);
+      setStep('SELECT_PROVIDER');
+      return;
+    }
+
+    if (cmd === '/model') {
+      setQuery('');
+      setErrorMsg(null);
+      if (models.length > 0) {
+        setStep('SELECT_MODEL');
+      } else {
+        // Need to fetch models first if provider hasn't been connected yet
+        setLoading(true);
+        try {
+          const activeModels = await fetchLocalModels(provider, config?.baseURLs?.[provider]);
+          setModels(activeModels);
+          setStep('SELECT_MODEL');
+        } catch (err: any) {
+          setErrorMsg(err.message);
+        } finally {
+          setLoading(false);
+        }
+      }
+      return;
+    }
+
+    if (cmd === '/sessions') {
+      setQuery('');
+      setLoading(true);
+      try {
+        const sessions = await listSessionsDetail();
+        setSessionList(sessions);
+        setStep('SELECT_SESSION');
+      } catch {
+        setErrorMsg('Could not load sessions.');
+      } finally {
+        setLoading(false);
+      }
+      return;
+    }
+    // ─────────────────────────────────────────────────────────────────────
+
     const userInput = query;
     const ts = now();
 
@@ -633,7 +848,7 @@ export function App() {
     setLoading(true);
     setAgentStatus('Thinking');
 
-    const client = getLocalClient(provider);
+    const client = getLocalClient(provider, config?.baseURLs?.[provider]);
     let keepRunningLoop = true;
 
     try {
@@ -800,6 +1015,19 @@ export function App() {
       setLoading(false);
       setAgentStatus(null);
       setCurrentStream('');
+
+      // ── Auto-save session after every completed AI turn ───────────────
+      setHistory(latestHistory => {
+        const id = sessionIdRef.current ?? (() => {
+          const newId = generateSessionId();
+          sessionIdRef.current = newId;
+          return newId;
+        })();
+        sessionIdRef.current = id;
+        // Fire-and-forget — errors are silently swallowed to never break the UI
+        saveSession(id, provider, selectedModel, latestHistory as any).catch(() => {});
+        return latestHistory;
+      });
     }
   };
 
@@ -843,6 +1071,100 @@ export function App() {
     );
   }
 
+  // ── SCREEN: Session Picker ────────────────────────────────────────────────
+  if (step === 'SELECT_SESSION') {
+    // All items including the fixed "+ New session" row at the bottom
+    const allItems = [
+      ...sessionList.map(s => {
+        const date = new Date(s.createdAt).toLocaleString('en-GB', {
+          day: '2-digit', month: 'short',
+          hour: '2-digit', minute: '2-digit',
+        });
+        return { label: `${date}  ${s.model}  (${s.turns} turn${s.turns !== 1 ? 's' : ''})`, id: s.id };
+      }),
+      { label: '+ Start new session', id: '__new__' },
+    ];
+
+    const focusedId = allItems[sessionPickerIndex]?.id ?? '__new__';
+    const isNewRow = focusedId === '__new__';
+
+    const doSelectSession = async (id: string) => {
+      if (id === '__new__') {
+        setHistory([]);
+        sessionIdRef.current = null;
+        setSessionPickerIndex(0);
+        setConfirmDelete(false);
+        setStep('CHAT');
+        return;
+      }
+      setLoading(true);
+      try {
+        const session = await loadSession(id);
+        if (session) {
+          setHistory(session.messages as Message[]);
+          sessionIdRef.current = id;
+        }
+      } catch {
+        setErrorMsg('Failed to load session.');
+      } finally {
+        setLoading(false);
+        setSessionPickerIndex(0);
+        setConfirmDelete(false);
+        setStep('CHAT');
+      }
+    };
+
+    const doDeleteFocused = async () => {
+      if (isNewRow) return;
+      await deleteSession(focusedId);
+      // Refresh the list and keep index in bounds
+      const updated = await listSessionsDetail();
+      setSessionList(updated);
+      setSessionPickerIndex(i => Math.min(i, Math.max(0, updated.length - 1)));
+      setConfirmDelete(false);
+    };
+
+    return (
+      <SetupShell
+        stepNum={0}
+        label="Switch session"
+        description={
+          sessionList.length === 0
+            ? 'No sessions saved yet. — Enter start   Esc back'
+            : `${sessionList.length} session${sessionList.length !== 1 ? 's' : ''} — ↑↓ navigate   Enter restore   D delete   Esc back`
+        }
+        loading={loading}
+        error={errorMsg}
+      >
+        <Box flexDirection="column">
+          {sessionList.length === 0 && (
+            <Box marginBottom={1}>
+              <Text dimColor>Start chatting to create your first session.</Text>
+            </Box>
+          )}
+          {allItems.map((item, i) => {
+            const focused = i === sessionPickerIndex;
+            return (
+              <Box key={item.id}>
+                <Text color={focused ? 'cyan' : 'blackBright'} bold={focused}>
+                  {focused ? '▶ ' : '  '}
+                </Text>
+                <Text color={focused ? 'white' : 'blackBright'} bold={focused}>
+                  {item.label}
+                </Text>
+                {focused && !isNewRow && (
+                  confirmDelete
+                    ? <Text color="red" bold>  delete? [D] confirm   [Esc] cancel</Text>
+                    : <Text dimColor>  [D] delete</Text>
+                )}
+              </Box>
+            );
+          })}
+        </Box>
+      </SetupShell>
+    );
+  }
+
   // Count only user turns for display
   const turnCount = history.filter(m => m.role === 'user').length;
 
@@ -850,22 +1172,31 @@ export function App() {
   return (
     <Box flexDirection="column" paddingX={2} paddingTop={1} paddingBottom={1}>
 
-      {/* ── Header ─────────────────────────────────────────────────────── */}
+      {/* ── Header ───────────────────────────────────────────── */}
       <Box justifyContent="space-between" marginBottom={0}>
         <Logo />
-        <Box>
-          <Text dimColor>{provider}  </Text>
-          <Text color="cyan">{selectedModel}</Text>
+        <Box flexDirection="column" alignItems="flex-end">
+          <Box>
+            <Text dimColor>{provider}  </Text>
+            <Text color="cyan">{selectedModel}</Text>
+          </Box>
+          {sessionIdRef.current && (
+            <Text dimColor>session {sessionIdRef.current.slice(-14)}</Text>
+          )}
         </Box>
       </Box>
 
-      {/* ── Sub-header: hotkeys + session stats ────────────────────────── */}
+      {/* ── Sub-header: commands ─────────────────────────────────────────── */}
       <Box justifyContent="space-between" marginBottom={1}>
         <Box>
-          <Text dimColor>Ctrl+P</Text>
-          <Text color="blackBright"> provider  </Text>
-          <Text dimColor>Ctrl+N</Text>
-          <Text color="blackBright"> model  </Text>
+          <Text dimColor>/provider</Text>
+          <Text color="blackBright">  </Text>
+          <Text dimColor>/model</Text>
+          <Text color="blackBright">  </Text>
+          <Text dimColor>/sessions</Text>
+          <Text color="blackBright">  </Text>
+          <Text dimColor>Ctrl+S</Text>
+          <Text color="blackBright"> save  </Text>
           {loading && !pendingApproval && (
             <>
               <Text dimColor>Esc</Text>
@@ -875,10 +1206,14 @@ export function App() {
           <Text dimColor>Ctrl+C</Text>
           <Text color="blackBright"> quit</Text>
         </Box>
-        {turnCount > 0 && (
-          <Text dimColor>{turnCount} turn{turnCount !== 1 ? 's' : ''}</Text>
-        )}
+        {saveConfirmation
+          ? <Text color="green">✓ Saved as default</Text>
+          : turnCount > 0 && (
+              <Text dimColor>{turnCount} turn{turnCount !== 1 ? 's' : ''}</Text>
+            )
+        }
       </Box>
+
 
       <Divider />
 
@@ -961,6 +1296,33 @@ export function App() {
 
       <Divider />
 
+      {/* ── Command palette (shown when query starts with /) ─────────────── */}
+      {(() => {
+        if (!query.startsWith('/') || loading) return null;
+        const matches = SLASH_COMMANDS.filter(c =>
+          c.cmd.startsWith(query.trim().toLowerCase())
+        );
+        if (matches.length === 0) return null;
+        return (
+          <Box flexDirection="column" marginTop={1} paddingLeft={2}>
+            {matches.map((c, i) => (
+              <Box key={c.cmd}>
+                <Text color={i === cmdPickerIndex ? 'cyan' : 'blackBright'} bold={i === cmdPickerIndex}>
+                  {i === cmdPickerIndex ? '▶ ' : '  '}
+                </Text>
+                <Text color={i === cmdPickerIndex ? 'white' : 'blackBright'} bold={i === cmdPickerIndex}>
+                  {c.cmd}
+                </Text>
+                <Text dimColor>  {c.description}</Text>
+              </Box>
+            ))}
+            <Text dimColor>  ↑↓ navigate   Tab/Enter pick</Text>
+          </Box>
+        );
+      })()}
+
+      <Divider />
+
       {/* ── Input ──────────────────────────────────────────────────────── */}
       <Box marginTop={1}>
         <Text color={loading ? 'blackBright' : 'cyan'} bold>
@@ -968,9 +1330,9 @@ export function App() {
         </Text>
         <TextInput
           value={query}
-          onChange={val => { setErrorMsg(null); setQuery(val); }}
+          onChange={val => { setErrorMsg(null); setCmdPickerIndex(-1); setQuery(val); }}
           onSubmit={handleSubmitChat}
-          placeholder={loading ? 'waiting for response…' : 'Ask anything or give a task…'}
+          placeholder={loading ? 'waiting for response…' : 'Ask anything, give a task, or type / for commands…'}
         />
       </Box>
 
