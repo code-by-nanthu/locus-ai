@@ -2,42 +2,50 @@
 
 ## 1. Overview
 
-Locus is currently a Node.js-based local AI CLI agent utilizing React Ink for a rich terminal UI. To evolve Locus from a script into a truly standalone, industrial-grade CLI application (comparable to Claude Code or GitHub CLI), we need to eliminate external runtime dependencies, handle state persistence natively, and introduce advanced security and context management.
+Locus is a robust local AI agent and development tool that operates entirely on your machine. Originally built as a Node.js-based CLI utilizing React Ink for a rich terminal UI, Locus has recently evolved to include a comprehensive Web Dashboard served locally via Express.
 
-## 2. Target Features
+To evolve Locus into a truly standalone, industrial-grade application (comparable to Claude Code or GitHub CLI), we are eliminating external runtime dependencies, handling state persistence natively, and introducing advanced security and context management.
 
-### 2.1 Zero-Dependency Distribution
+## 2. Implemented Features
 
-* **Single Binary Compilation:** Compile the TypeScript/React codebase into a single, self-contained native executable binary (e.g., `locus-macos`, `locus-linux`, `locus.exe`) using tools like `pkg` or `bun`. This allows users to run the app instantly without requiring Node.js or pnpm on their machine.
-* **Global Installer Script:** Provide a standard curl-to-sh install script (`curl -fsSL https://... | sh`) that automatically detects the user's OS and architecture, downloads the correct binary, and moves it to the user's `/usr/local/bin` path.
+### 2.1 Web Dashboard (React + Tailwind)
+
+* **Local Web Server:** A dedicated Express server (`/api`) serving a beautiful, fully-responsive React single-page application.
+* **Session Management:** Users can seamlessly browse, rename, and delete chat histories directly from the sidebar.
+* **Dynamic Starter Prompts:** On a fresh chat, Locus automatically generates contextual suggestion prompts using the active LLM.
+* **Theme Support:** Full Light/Dark mode toggling adhering to system preferences.
 
 ### 2.2 Local Configuration & State Persistence
 
-* **Global Config System (`~/.locusrc`):** Implement a file-backed storage layer to remember the user's preferred default provider, default model, and workspace blacklists. This eliminates the need to navigate the setup menu on every single launch.
-* **Session Persistence & History Logs:** Save chat logs locally to an application data folder (e.g., `~/.config/locus/history/`). This allows users to resume previous conversations by passing a flag like `locus --session <session-id>`.
+* **Global Config System (`~/.config/locus/config.json`):** A file-backed storage layer that remembers the user's preferred default provider, default model, and custom port configurations.
+* **Session Persistence & History Logs:** Chat logs are saved locally to `~/.config/locus/sessions/`. This allows users to resume previous conversations via the CLI (`/sessions`) or the Web UI.
 
-### 2.3 Advanced Context & Discovery Tools
+### 2.3 Expanded AI Connectivity
 
-* **Vector Embeddings Index (RAG):** To prevent large projects from crashing the local LLM's context window, integrate a tiny local embedding database (such as a native JS vector store or SQLite-vec) to vectorize the workspace. This enables fast semantic searching across thousands of source files.
-* **Intelligent File Token Budgeting:** Build an automatic system token counter that warns the user if reading a specific file will exceed the local model's maximum context length, gracefully offering to send a summarized version instead.
+* **Universal OpenAI-Compatibility:** Native support for 8 major local AI inference engines: Ollama, LM Studio, LocalAI, vLLM, Jan, GPT4All, Llama.cpp, and Oobabooga.
+* **Custom Base URLs:** Users can override the default connection ports (e.g., `localhost:11434`) dynamically via the UI to accommodate custom network setups.
 
-### 2.4 Enterprise-Grade Security Extensions
+## 3. Target Features (Roadmap)
 
-* **Tool Rule Configuration (Auto-Approve Whitelists):** The current Security Verification Gateway forces manual approval for all destructive actions. A config rule system will allow users to flag certain tools or paths as safe (e.g., `read_file` is auto-approved, but `run_command` always prompts), reducing alert fatigue.
-* **System Environment Sandbox:** Execute all `run_command` actions inside an isolated local container (like Docker) or an ephemeral shell environment to guarantee the AI agent cannot accidentally corrupt the host operating system.
+### 3.1 Zero-Dependency Distribution
 
-## 3. Structural Comparison
+* **Single Binary Compilation:** Compile the TypeScript/React codebase into a single, self-contained native executable binary (e.g., `locus-macos`, `locus-linux`, `locus.exe`) using tools like `pkg` or `bun`.
+* **Global Installer Script:** Provide a standard curl-to-sh install script (`curl -fsSL https://... | sh`).
 
-| Feature Strategy | Current (Node.js Script) | Target (Standalone Application) |
-| --- | --- | --- |
-| **User Prerequisites** | Requires Node.js, pnpm, and `node_modules`. | Zero prerequisites. Runs as a native machine binary. |
-| **Launch Efficiency** | Forces provider/model selection on every spin-up. | Instant launch. Restores global configurations automatically. |
-| **Scale Constraints** | Drops chat history and context entirely on exit. | Persistent memory. Resumes previous sessions via local logs. |
+### 3.2 Advanced Context & Discovery Tools
+
+* **Vector Embeddings Index (RAG):** Integrate a tiny local embedding database (such as a native JS vector store or SQLite-vec) to vectorize the workspace for fast semantic searching across thousands of source files.
+* **Intelligent File Token Budgeting:** Build an automatic system token counter that warns the user if reading a specific file will exceed the local model's maximum context length.
+
+### 3.3 Enterprise-Grade Security Extensions
+
+* **Tool Rule Configuration (Auto-Approve Whitelists):** Allow users to flag certain tools or paths as safe (e.g., `read_file` is auto-approved, but `run_command` always prompts).
+* **System Environment Sandbox:** Execute all `run_command` actions inside an isolated local container (like Docker) or an ephemeral shell environment.
 
 ## 4. Proposed Implementation Roadmap
 
-1. **Phase 1: Persistence & UX**
-   Implement the Global Config System & Session History Recorder to remember preferences and past chats.
+1. **Phase 1: Persistence, UX, & Web Dashboard (COMPLETED)**
+   Implemented the Global Config System, Session History Recorder, Expanded Providers, and the complete Web UI.
 2. **Phase 2: Security Ergonomics**
    Build the Auto-Approve Whitelist Rule system into the existing Security Verification Gateway.
 3. **Phase 3: Distribution**
