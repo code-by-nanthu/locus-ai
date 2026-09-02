@@ -668,33 +668,43 @@ export function App({
   // they output raw JSON text like:
   //   {"name": "read_file", "parameters": {"filePath": "..."} }
   // This helper detects that pattern and normalises it into a real tool call.
-  function parsePseudoToolCall(text: string): { name: string; args: Record<string, any> } | null {
-    const trimmed = text.trim();
-    if (!trimmed.includes('{')) return null;
-    try {
-      // Robust extraction: isolate everything between the first and last brace
-      const startIdx = trimmed.indexOf('{');
-      const endIdx = trimmed.lastIndexOf('}');
-      if (startIdx === -1 || endIdx === -1) return null;
-      
-      const jsonStr = trimmed.substring(startIdx, endIdx + 1);
-      const obj = JSON.parse(jsonStr);
-      
-      if (!obj.name) return null;
+  function parsePseudoToolCalls(text: string): Array<{ name: string; args: Record<string, any> }> {
+    const results: Array<{ name: string; args: Record<string, any> }> = [];
+    const knownTools = new Set(['read_file', 'write_file', 'run_command', 'search_workspace', 'browser_action']);
 
-      // Normalise the args key — models use 'parameters', 'arguments', 'input', or 'args'
-      const raw = obj.parameters ?? obj.arguments ?? obj.input ?? obj.args ?? {};
-      const args = typeof raw === 'string' ? JSON.parse(raw) : raw;
-
-      const knownTools = new Set(['read_file', 'write_file', 'run_command', 'search_workspace']);
-      // Accept exact name or a name that contains a known tool name
-      const matched = [...knownTools].find(t => obj.name === t || obj.name.includes(t));
-      if (!matched) return null;
-
-      return { name: matched, args };
-    } catch {
-      return null;
+    const lines = text.split('\n');
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed.startsWith('{') || !trimmed.endsWith('}')) continue;
+      try {
+        const obj = JSON.parse(trimmed);
+        if (obj.name) {
+          const raw = obj.parameters ?? obj.arguments ?? obj.input ?? obj.args ?? {};
+          const args = typeof raw === 'string' ? JSON.parse(raw) : raw;
+          const matched = [...knownTools].find(t => obj.name === t || obj.name.includes(t));
+          if (matched) results.push({ name: matched, args });
+        }
+      } catch {}
     }
+
+    if (results.length === 0) {
+      try {
+        const startIdx = text.indexOf('{');
+        const endIdx = text.lastIndexOf('}');
+        if (startIdx !== -1 && endIdx !== -1) {
+          const jsonStr = text.substring(startIdx, endIdx + 1);
+          const obj = JSON.parse(jsonStr);
+          if (obj.name) {
+            const raw = obj.parameters ?? obj.arguments ?? obj.input ?? obj.args ?? {};
+            const args = typeof raw === 'string' ? JSON.parse(raw) : raw;
+            const matched = [...knownTools].find(t => obj.name === t || obj.name.includes(t));
+            if (matched) results.push({ name: matched, args });
+          }
+        }
+      } catch {}
+    }
+    
+    return results;
   }
 
   // ── Agent loop ────────────────────────────────────────────────────────────
@@ -786,8 +796,8 @@ export function App({
         const hasToolsInHistory = localHistory.some(
           m => m.role === 'tool' || (m.tool_calls && m.tool_calls.length > 0)
         );
-        const isFileCommand =
-          /read|write|file|create|make|code|folder|directory|script|app|run|test|execute|command|install|npm|yarn|pnpm|search|find|workspace|scan/i.test(
+        const isToolCommand =
+          /read|write|file|create|make|code|folder|directory|script|app|run|test|execute|command|install|npm|yarn|pnpm|search|find|workspace|scan|browse|navigate|click|screenshot|browser|web|url|internet/i.test(
             userInput
           ) || hasToolsInHistory;
 
@@ -799,9 +809,9 @@ export function App({
               content:
                 'You are a helpful local AI CLI assistant.\n\n' +
                 'RULES:\n' +
-                '1. ONLY use the explicitly provided tools: read_file, write_file, run_command, search_workspace. NEVER invent or hallucinate new tools.\n' +
+                '1. ONLY use the explicitly provided tools: read_file, write_file, run_command, search_workspace, browser_action. NEVER invent or hallucinate new tools.\n' +
                 '2. If the user asks you to "write a function" or "write code", output the code directly in markdown format. DO NOT use tools for this.\n' +
-                '3. ONLY use tools when interacting with the user\'s local filesystem or terminal.',
+                '3. ONLY use tools when interacting with the user\'s local filesystem, terminal, or browsing the web.',
             },
             ...localHistory.map(m => ({
               role: m.role,
@@ -814,7 +824,7 @@ export function App({
           stream: true,
         };
 
-        if (isFileCommand) {
+        if (isToolCommand) {
           requestConfig.tools = toolDefinitions;
           requestConfig.tool_choice = 'auto';
         }
@@ -864,18 +874,17 @@ export function App({
         // If the model printed JSON instead of using proper tool_calls, handle it.
         let isPseudo = false;
         if (finalContent && toolCalls.length === 0) {
-          const pseudo = parsePseudoToolCall(finalContent);
-          if (pseudo) {
+          const pseudoCalls = parsePseudoToolCalls(finalContent);
+          if (pseudoCalls.length > 0) {
             isPseudo = true;
             // Don't add the raw JSON to history — treat it as a silent tool call
             setCurrentStream('');
 
-            // Synthesise a fake tool_call object and run through the same path
-            const fakeCall = {
-              id: `pseudo-${Date.now()}`,
+            // Synthesise fake tool_call objects
+            toolCalls = pseudoCalls.map((pseudo, idx) => ({
+              id: `pseudo-${Date.now()}-${idx}`,
               function: { name: pseudo.name, arguments: JSON.stringify(pseudo.args) },
-            };
-            toolCalls = [fakeCall];
+            }));
           }
         }
         // ───────────────────────────────────────────────────────────────────

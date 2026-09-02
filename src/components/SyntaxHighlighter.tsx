@@ -48,7 +48,7 @@ export function SyntaxHighlighter({ text }: CodeHighlighterProps) {
             </Box>
           ) : null}
           {linesToRender.map((line, lIdx) => {
-            const highlightedLine = line.split(/(\b(?:const|let|var|function|return|import|from|export|class|if|else|for|while|async|await|try|catch)\b|(['"`][\s\S]*?['"`])|(\/\/.*))/g).map((token, tIdx) => {
+            const highlightedLine = line.split(/(\b(?:const|let|var|function|return|import|from|export|class|if|else|for|while|async|await|try|catch)\b|['"`][\s\S]*?['"`]|\/\/.*)/g).map((token, tIdx) => {
               if (!token) return null;
               if (/^\b(const|let|var|function|return|import|from|export|class|if|else|for|while|async|await|try|catch)\b$/.test(token)) {
                 return <Text key={tIdx} color="magenta" bold>{token}</Text>;

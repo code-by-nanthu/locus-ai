@@ -2,6 +2,12 @@ import * as fs from 'fs/promises';
 import * as path from 'path';
 import { execa } from 'execa';
 import { glob } from 'glob';
+import { chromium, Browser, BrowserContext, Page } from 'playwright';
+
+// Global state for stateful browser sessions
+let globalBrowser: Browser | null = null;
+let globalContext: BrowserContext | null = null;
+let globalPage: Page | null = null;
 
 export const toolDefinitions = [
   {
@@ -59,6 +65,24 @@ export const toolDefinitions = [
         required: ['command']
       }
     }
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'browser_action',
+      description: 'Perform a stateful browser action. Automatically launches a Chromium browser with video recording on first use.',
+      parameters: {
+        type: 'object',
+        properties: {
+          action: { type: 'string', description: 'Action to perform: navigate | click | fill | evaluate | screenshot | close' },
+          url: { type: 'string', description: 'URL to visit (for navigate action)' },
+          selector: { type: 'string', description: 'CSS selector (for click, fill actions)' },
+          text: { type: 'string', description: 'Text to type (for fill action)' },
+          script: { type: 'string', description: 'JavaScript code to execute in browser context (for evaluate action). The code runs inside the page.evaluate() block.' }
+        },
+        required: ['action']
+      }
+    }
   }
 ];
 
@@ -101,6 +125,68 @@ export async function executeTool(name: string, args: any): Promise<string> {
         stdout: stdout?.trim() || '',
         stderr: stderr?.trim() || ''
       });
+    }
+
+    if (name === 'browser_action') {
+      const { action, url, selector, text, script } = args;
+
+      // Auto-initialize browser on first non-close action
+      if (!globalBrowser && action !== 'close') {
+        const recordingsDir = path.resolve(process.cwd(), 'recordings');
+        await fs.mkdir(recordingsDir, { recursive: true });
+        
+        globalBrowser = await chromium.launch({ headless: false }); // Show browser to user
+        globalContext = await globalBrowser.newContext({
+          recordVideo: { dir: recordingsDir }
+        });
+        globalPage = await globalContext.newPage();
+      }
+
+      if (!globalPage && action !== 'close') {
+        return JSON.stringify({ success: false, error: 'Browser failed to initialize.' });
+      }
+
+      switch (action) {
+        case 'navigate':
+          if (!url) return JSON.stringify({ success: false, error: 'url is required for navigate' });
+          await globalPage!.goto(url, { waitUntil: 'domcontentloaded' });
+          return JSON.stringify({ success: true, message: `Navigated to ${await globalPage!.title()}` });
+        
+        case 'click':
+          if (!selector) return JSON.stringify({ success: false, error: 'selector is required for click' });
+          await globalPage!.click(selector);
+          return JSON.stringify({ success: true, message: `Clicked element matching '${selector}'` });
+        
+        case 'fill':
+          if (!selector || text === undefined) return JSON.stringify({ success: false, error: 'selector and text are required for fill' });
+          await globalPage!.fill(selector, text);
+          return JSON.stringify({ success: true, message: `Filled element matching '${selector}' with text` });
+        
+        case 'evaluate':
+          if (!script) return JSON.stringify({ success: false, error: 'script is required for evaluate' });
+          const result = await globalPage!.evaluate(script);
+          return JSON.stringify({ success: true, result });
+        
+        case 'screenshot':
+          const screenshotPath = path.resolve(process.cwd(), `screenshot-${Date.now()}.png`);
+          await globalPage!.screenshot({ path: screenshotPath });
+          return JSON.stringify({ success: true, message: `Screenshot saved to ${screenshotPath}` });
+        
+        case 'close':
+          if (globalContext) {
+            await globalContext.close(); // Ensures video is fully flushed and saved
+          }
+          if (globalBrowser) {
+            await globalBrowser.close();
+          }
+          globalBrowser = null;
+          globalContext = null;
+          globalPage = null;
+          return JSON.stringify({ success: true, message: 'Browser session closed successfully. Video saved in ./recordings' });
+        
+        default:
+          return JSON.stringify({ success: false, error: `Unknown browser action: ${action}` });
+      }
     }
 
     return JSON.stringify({ error: `Tool ${name} not found.` });
