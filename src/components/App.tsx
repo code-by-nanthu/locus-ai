@@ -28,6 +28,7 @@ const SLASH_COMMANDS = [
   { cmd: '/provider',  description: 'Switch the AI provider (Ollama / LM Studio)' },
   { cmd: '/model',     description: 'Switch the active model' },
   { cmd: '/sessions',  description: 'Browse and restore a previous chat session' },
+  { cmd: '/whitelist', description: 'View or clear auto-approved tools' },
 ] as const;
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -334,13 +335,14 @@ interface AppProps {
 }
 
 export function App({
-  config,
+  config: initialConfig,
   initialHistory = [],
   initialProvider = null,
   initialModel = null,
   initialSessionId = null,
 }: AppProps) {
   const { exit } = useApp();
+  const [config, setConfig] = useState<LocusConfig | null>(initialConfig);
 
   // If config has defaults, skip the setup wizard entirely
   const hasDefaults = !!(initialProvider && initialModel);
@@ -386,19 +388,20 @@ export function App({
   interface PendingApproval {
     toolName: string;
     preview: string; // human-readable summary of what will happen
-    resolve: (approved: boolean) => void;
+    pattern: string; // e.g. "run_command:npm" or "write_file"
+    resolve: (result: { approved: boolean; always: boolean }) => void;
   }
   const [pendingApproval, setPendingApproval] = useState<PendingApproval | null>(null);
-  const approvalResolveRef = useRef<((v: boolean) => void) | null>(null);
+  const approvalResolveRef = useRef<((v: { approved: boolean; always: boolean }) => void) | null>(null);
 
-  // Promise that pauses the agent loop until the user presses Y or N
-  const requestApproval = (toolName: string, args: any): Promise<boolean> => {
+  // Promise that pauses the agent loop until the user presses Y, N, or A
+  const requestApproval = (toolName: string, args: any, pattern: string): Promise<{ approved: boolean; always: boolean }> => {
     const preview = toolName === 'run_command'
       ? `$ ${args.command}`
       : `${args.filePath}`;
     return new Promise(resolve => {
       approvalResolveRef.current = resolve;
-      setPendingApproval({ toolName, preview, resolve });
+      setPendingApproval({ toolName, preview, pattern, resolve });
     });
   };
 
@@ -607,15 +610,16 @@ export function App({
       if (!pendingApproval && !key.ctrl && input !== 'c') return;
     }
 
-    // When an approval gate is active, Y/N are captured exclusively
+    // When an approval gate is active, Y/N/A are captured exclusively
     if (pendingApproval) {
       const ch = input.toLowerCase();
-      if (ch === 'y' || ch === 'n') {
-        const approved = ch === 'y';
+      if (ch === 'y' || ch === 'n' || ch === 'a') {
+        const approved = ch === 'y' || ch === 'a';
+        const always = ch === 'a';
         const resolve = approvalResolveRef.current;
         approvalResolveRef.current = null;
         setPendingApproval(null);
-        resolve?.(approved);
+        resolve?.({ approved, always });
       }
       return; // swallow all other keys during approval
     }
@@ -765,6 +769,34 @@ export function App({
       } finally {
         setLoading(false);
       }
+      return;
+    }
+
+    if (cmd === '/whitelist') {
+      setQuery('');
+      setHistoryIndex(-1);
+      setDraftQuery('');
+      const list = config?.autoApprove || [];
+      const content = list.length === 0 
+        ? 'Your auto-approve whitelist is currently empty.'
+        : `**Auto-approved patterns:**\n${list.map(l => `- ${l}`).join('\n')}\n\nType \`/whitelist clear\` to reset it.`;
+      setHistory(prev => [...prev, { role: 'assistant', content, timestamp: now() }]);
+      return;
+    }
+
+    if (cmd === '/whitelist clear') {
+      setQuery('');
+      setHistoryIndex(-1);
+      setDraftQuery('');
+      const newConfig: LocusConfig = { 
+        defaultProvider: 'ollama', 
+        defaultModel: '', 
+        ...config, 
+        autoApprove: [] 
+      };
+      setConfig(newConfig);
+      saveConfig(newConfig).catch(() => {});
+      setHistory(prev => [...prev, { role: 'assistant', content: 'Whitelist cleared successfully.', timestamp: now() }]);
       return;
     }
     // ─────────────────────────────────────────────────────────────────────
@@ -923,7 +955,31 @@ export function App({
             // ── Security gate for destructive tools ──────────────────────
             let result: string;
             if (GUARDED_TOOLS.has(name)) {
-              const approved = await requestApproval(name, args);
+              let pattern = name;
+              if (name === 'run_command') {
+                const execName = (args.command || '').trim().split(/\s+/)[0];
+                pattern = `run_command:${execName}`;
+              }
+
+              let approved = false;
+              if (config?.autoApprove?.includes(pattern)) {
+                approved = true;
+              } else {
+                const approvalResult = await requestApproval(name, args, pattern);
+                approved = approvalResult.approved;
+                if (approvalResult.always) {
+                  const newAutoApprove = [...(config?.autoApprove || []), pattern];
+                  const newConfig: LocusConfig = {
+                    defaultProvider: 'ollama', // fallback
+                    defaultModel: '',
+                    ...config,
+                    autoApprove: newAutoApprove,
+                  };
+                  setConfig(newConfig);
+                  await saveConfig(newConfig);
+                }
+              }
+
               if (!approved) {
                 result = JSON.stringify({ denied: true });
                 localHistory.push({
@@ -1218,7 +1274,9 @@ export function App({
             <Text color="yellow" bold>[Y]</Text>
             <Text color="blackBright"> approve   </Text>
             <Text color="red" bold>[N]</Text>
-            <Text color="blackBright"> deny</Text>
+            <Text color="blackBright"> deny   </Text>
+            <Text color="green" bold>[A]</Text>
+            <Text color="blackBright"> always allow {pendingApproval.pattern.startsWith('run_command:') ? `'${pendingApproval.pattern.split(':')[1]}' commands` : pendingApproval.pattern}</Text>
           </Box>
         </Box>
       )}
