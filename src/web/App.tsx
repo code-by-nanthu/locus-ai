@@ -325,9 +325,34 @@ export default function App() {
     setApprovalReq(null);
   };
 
+
   // ── derived view state (no side effects) ─────────────────────────────────
   const isFreshChat = !currentSessionId && history.length <= 1;
   const visibleHistory = isFreshChat ? [] : history;
+
+  // Dynamic starters
+  const [starters, setStarters] = useState<string[]>([
+    'Summarise the structure of this project',
+    'Find every TODO under src/ and group them by file',
+    'Run the test suite and explain any failures',
+    'What changed in the last commit?'
+  ]);
+  const [startersLoading, setStartersLoading] = useState(false);
+  const fetchedStartersRef = useRef(false);
+
+  useEffect(() => {
+    if (isFreshChat && !fetchedStartersRef.current) {
+      fetchedStartersRef.current = true;
+      setStartersLoading(true);
+      fetch('/api/suggestions')
+        .then(r => r.json())
+        .then(data => {
+           if (Array.isArray(data) && data.length === 4) setStarters(data);
+        })
+        .catch(() => {})
+        .finally(() => setStartersLoading(false));
+    }
+  }, [isFreshChat]);
 
   const fillPrompt = (text: string) => {
     setInput(text);
@@ -549,7 +574,7 @@ export default function App() {
 
         <main className="flex-1 overflow-y-auto overscroll-contain">
           {isFreshChat ? (
-            <Welcome onPick={fillPrompt} />
+            <Welcome onPick={fillPrompt} starters={starters} loading={startersLoading} />
           ) : (
             <div className="mx-auto w-full max-w-[46rem] px-4 sm:px-6 py-7 pb-44 flex flex-col gap-6">
               {visibleHistory.map((msg, i) => (
@@ -812,22 +837,16 @@ function IconButton({ label, onClick, children }: {
   );
 }
 
-const STARTERS = [
-  'Summarise the structure of this project',
-  'Find every TODO under src/ and group them by file',
-  'Run the test suite and explain any failures',
-  'What changed in the last commit?'
-];
-
-function Welcome({ onPick }: { onPick: (text: string) => void }) {
+function Welcome({ onPick, starters, loading }: { onPick: (text: string) => void; starters: string[]; loading: boolean }) {
   return (
     <div className="min-h-full flex items-center justify-center px-5 pb-44 pt-10">
       <div className="w-full max-w-[36rem] text-center rise">
         <span className="inline-flex h-11 w-11 items-center justify-center rounded-xl bg-ink text-canvas font-mono text-base">
           &gt;_
         </span>
-        <h2 className="mt-5 text-[26px] sm:text-[30px] font-semibold tracking-[-0.02em] leading-tight">
+        <h2 className="mt-5 text-[26px] sm:text-[30px] font-semibold tracking-[-0.02em] leading-tight flex items-center justify-center gap-3">
           What are we working on?
+          {loading && <span className="spinner h-5 w-5 border-ink/30 border-t-ink/100 mt-1" />}
         </h2>
         <p className="mt-2.5 text-[15px] leading-relaxed text-ink-muted">
           Locus reads your files and runs commands on this machine. You approve
@@ -835,9 +854,10 @@ function Welcome({ onPick }: { onPick: (text: string) => void }) {
         </p>
 
         <div className="mt-7 grid gap-2 sm:grid-cols-2 text-left">
-          {STARTERS.map(s => (
+          {starters.map((s, i) => (
             <button
-              key={s}
+              key={i}
+              
               onClick={() => onPick(s)}
               className="group h-full px-3.5 py-3 rounded-xl bg-raised border border-line hover:border-line-strong transition-colors flex items-start justify-between gap-3"
             >

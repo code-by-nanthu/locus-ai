@@ -65,6 +65,45 @@ export async function runUiCommand() {
     }
   });
 
+
+const FALLBACK_SUGGESTIONS = [
+  'Summarise the structure of this project',
+  'Find every TODO under src/ and group them by file',
+  'Run the test suite and explain any failures',
+  'What changed in the last commit?'
+];
+
+  app.get('/api/suggestions', async (req, res) => {
+    try {
+      const client = getLocalClient(config.defaultProvider, config.baseURLs?.[config.defaultProvider]);
+      const response = await client.chat.completions.create({
+        model: config.defaultModel,
+        messages: [
+          {
+            role: 'user',
+            content:
+              'Generate exactly 4 short, diverse example prompts that a developer might ask a local AI CLI assistant. ' +
+              'Cover different areas: coding help, file operations, shell commands, and a conceptual question. ' +
+              'Reply ONLY with a valid JSON array of 4 strings, no explanation, no markdown. Example format: ["prompt1","prompt2","prompt3","prompt4"]',
+          },
+        ],
+        stream: false,
+      });
+
+      const raw = (response as any).choices?.[0]?.message?.content?.trim() ?? '';
+      const jsonMatch = raw.match(/\[.*\]/s);
+      if (jsonMatch) {
+        const parsed = JSON.parse(jsonMatch[0]);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return res.json(parsed.slice(0, 4).map(String));
+        }
+      }
+      res.json(FALLBACK_SUGGESTIONS);
+    } catch (e) {
+      res.json(FALLBACK_SUGGESTIONS);
+    }
+  });
+
   app.get('/api/config', (req, res) => {
     res.json(config);
   });
