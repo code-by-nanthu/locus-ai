@@ -2,11 +2,11 @@ import express from 'express';
 import * as path from 'path';
 import open from 'open';
 import { fileURLToPath } from 'url';
-import { loadConfig, saveConfig, LocusConfig } from '../core/config.js';
-import { getLocalClient, fetchLocalModels } from '../services/llm.js';
-import { generateSessionId, saveSession, listSessionsDetail, loadSession, deleteSession, renameSession } from '../core/session.js';
-import { runAgentLoop } from '../services/agent.js';
-import { FALLBACK_SUGGESTIONS } from '../core/constants.js';
+import { loadConfig, saveConfig, LocusConfig } from '../../core/config.js';
+import { getLocalClient, fetchLocalModels } from '../../services/llm.js';
+import { generateSessionId, saveSession, listSessionsDetail, loadSession, deleteSession, renameSession } from '../../core/session.js';
+import { runAgentLoop, fetchPromptSuggestions } from '../../services/agent.js';
+import { FALLBACK_SUGGESTIONS } from '../../core/constants.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -21,7 +21,7 @@ export async function runUiCommand() {
   const app = express();
   app.use(express.json());
 
-  const webDir = path.join(__dirname, '..', 'web');
+  const webDir = path.join(__dirname, '..', '..', 'web');
   app.use(express.static(webDir));
 
   // Map to hold pending approvals: authId -> resolve function
@@ -72,29 +72,8 @@ export async function runUiCommand() {
   app.get('/api/suggestions', async (req, res) => {
     try {
       const client = getLocalClient(config.defaultProvider, config.baseURLs?.[config.defaultProvider]);
-      const response = await client.chat.completions.create({
-        model: config.defaultModel,
-        messages: [
-          {
-            role: 'user',
-            content:
-              'Generate exactly 4 short, diverse example prompts that a developer might ask a local AI CLI assistant. ' +
-              'Cover different areas: coding help, file operations, shell commands, and a conceptual question. ' +
-              'Reply ONLY with a valid JSON array of 4 strings, no explanation, no markdown. Example format: ["prompt1","prompt2","prompt3","prompt4"]',
-          },
-        ],
-        stream: false,
-      });
-
-      const raw = (response as any).choices?.[0]?.message?.content?.trim() ?? '';
-      const jsonMatch = raw.match(/\[.*\]/s);
-      if (jsonMatch) {
-        const parsed = JSON.parse(jsonMatch[0]);
-        if (Array.isArray(parsed) && parsed.length) {
-          return res.json(parsed.slice(0, 4).map(String));
-        }
-      }
-      res.json(FALLBACK_SUGGESTIONS);
+      const suggestions = await fetchPromptSuggestions(client, config.defaultModel);
+      res.json(suggestions);
     } catch {
       res.json(FALLBACK_SUGGESTIONS);
     }

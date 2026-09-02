@@ -1,19 +1,28 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Box, Text, useInput, useApp } from 'ink';
 import TextInput from 'ink-text-input';
-import Spinner from 'ink-spinner';
 import SelectInput from 'ink-select-input';
-import { getLocalClient, fetchLocalModels, Provider, DEFAULT_URLS } from '../services/llm.js';
-import { toolDefinitions, executeTool, normalizeToolName } from '../services/tools.js';
-import { SyntaxHighlighter } from './SyntaxHighlighter.js';
-import { loadConfig, saveConfig, LocusConfig } from '../core/config.js';
-import { listSessionsDetail, loadSession, deleteSession, SessionSummary } from '../core/session.js';
-import { Logo, BigLogo } from './Logo.js';
+import Spinner from 'ink-spinner';
+import { getLocalClient, fetchLocalModels, Provider, DEFAULT_URLS } from '../../services/llm.js';
+import { toolDefinitions, executeTool, normalizeToolName } from '../../services/tools.js';
+import { fetchPromptSuggestions } from '../../services/agent.js';
+import { saveConfig, LocusConfig } from '../../core/config.js';
+import { listSessionsDetail, loadSession, deleteSession, SessionSummary } from '../../core/session.js';
+import { GUARDED_TOOLS, FALLBACK_SUGGESTIONS } from '../../core/constants.js';
 import { useApprovalGate } from '../hooks/useApprovalGate.js';
 import { useSessionManager } from '../hooks/useSessionManager.js';
-import { GUARDED_TOOLS, FALLBACK_SUGGESTIONS } from '../core/constants.js';
+import { Logo } from './common/Logo.js';
+import { Divider } from './common/Divider.js';
+import { ElapsedTimer } from './common/ElapsedTimer.js';
+import { ToolEntry } from './chat/ToolEntry.js';
+import { UserMessage } from './chat/UserMessage.js';
+import { AgentMessage } from './chat/AgentMessage.js';
+import { WelcomeHints } from './chat/WelcomeHints.js';
+import { SetupShell } from './setup/SetupShell.js';
+import { ProviderItem } from './setup/ProviderItem.js';
+import { ModelItem } from './setup/ModelItem.js';
 
-interface Message {
+export interface Message {
   role: 'user' | 'assistant' | 'tool';
   name?: string;
   tool_call_id?: string;
@@ -23,14 +32,14 @@ interface Message {
   rejected?: boolean; // true when a tool was denied by the user
 }
 
-type Step = 'SELECT_PROVIDER' | 'SELECT_URL' | 'SELECT_MODEL' | 'SELECT_SESSION' | 'CHAT';
+export type Step = 'SELECT_PROVIDER' | 'SELECT_URL' | 'SELECT_MODEL' | 'SELECT_SESSION' | 'CHAT';
 
 // ─── Available slash commands ────────────────────────────────────────────────────────────
 
-const SLASH_COMMANDS = [
-  { cmd: '/provider',  description: 'Switch the AI provider' },
-  { cmd: '/model',     description: 'Switch the active model' },
-  { cmd: '/sessions',  description: 'Browse and restore a previous chat session' },
+export const SLASH_COMMANDS = [
+  { cmd: '/provider', description: 'Switch the AI provider' },
+  { cmd: '/model', description: 'Switch the active model' },
+  { cmd: '/sessions', description: 'Browse and restore a previous chat session' },
   { cmd: '/whitelist', description: 'View or clear auto-approved tools' },
 ] as const;
 
@@ -40,300 +49,49 @@ function now(): string {
   return new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
 }
 
-// ─── Reusable Components ──────────────────────────────────────────────────────
+// ─── Pseudo-tool-call detection ──────────────────────────────────────────────
+function parsePseudoToolCalls(text: string): Array<{ name: string; args: Record<string, any> }> {
+  const results: Array<{ name: string; args: Record<string, any> }> = [];
+  const knownTools = new Set(['read_file', 'write_file', 'run_command', 'search_workspace', 'browser_action']);
 
-function Divider() {
-  // Use full terminal width, minus 4 for the horizontal padding of the container
-  const width = process.stdout.columns ? Math.max(0, process.stdout.columns - 4) : 56;
-  return <Text dimColor>{'─'.repeat(width)}</Text>;
-}
-
-/** Unicode block-style progress bar for the setup wizard */
-function StepBar({ current, total }: { current: number; total: number }) {
-  const filled = '█'.repeat(current);
-  const empty = '░'.repeat(total - current);
-  return (
-    <Box>
-      <Text color="cyan">{filled}</Text>
-      <Text dimColor>{empty}</Text>
-      <Text color="blackBright">  {current}/{total}</Text>
-    </Box>
-  );
-}
-
-// ─── Elapsed Timer ────────────────────────────────────────────────────────────
-
-function ElapsedTimer({ running }: { running: boolean }) {
-  const [elapsed, setElapsed] = useState(0);
-  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-
-  useEffect(() => {
-    if (running) {
-      setElapsed(0);
-      intervalRef.current = setInterval(() => setElapsed(s => s + 1), 1000);
-    } else {
-      if (intervalRef.current) clearInterval(intervalRef.current);
-    }
-    return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
-  }, [running]);
-
-  if (!running) return null;
-
-  const s = elapsed % 60;
-  const m = Math.floor(elapsed / 60);
-  const label = m > 0 ? `${m}m ${s}s` : `${s}s`;
-  return <Text dimColor> {label}</Text>;
-}
-
-// ─── Tool Entry ───────────────────────────────────────────────────────────────
-
-const ToolEntry = React.memo(function ToolEntry({ name, content, rejected }: { name?: string; content: string | null; rejected?: boolean }) {
-  let success = true;
-  let detail = '';
-
-  try {
-    const parsed = JSON.parse(content || '{}');
-    if (parsed.success === false || parsed.error) {
-      success = false;
-      detail = parsed.error ?? 'unknown error';
-    } else if (parsed.message) {
-      detail = parsed.message;
-    } else if (parsed.stdout) {
-      // Show up to 2 lines of stdout
-      const lines = parsed.stdout.trim().split('\n').slice(0, 2);
-      detail = lines.join(' ↵ ');
-    } else if (parsed.workspaceFiles) {
-      detail = `${parsed.workspaceFiles.length} files found`;
-    } else if (parsed.content) {
-      const chars = parsed.content.length;
-      const lines = parsed.content.split('\n').length;
-      detail = `${lines} lines, ${chars} chars`;
-    }
-  } catch {
-    detail = 'completed';
+  const lines = text.split('\n');
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith('{') || !trimmed.endsWith('}')) continue;
+    try {
+      const obj = JSON.parse(trimmed);
+      if (obj.name) {
+        const raw = obj.parameters ?? obj.arguments ?? obj.input ?? obj.args ?? {};
+        const args = typeof raw === 'string' ? JSON.parse(raw) : raw;
+        const matched = [...knownTools].find((t) => obj.name === t || obj.name.includes(t));
+        if (matched) results.push({ name: matched, args });
+      }
+    } catch {}
   }
 
-  const meta: Record<string, { icon: string; label: string }> = {
-    read_file:        { icon: '↗', label: 'read' },
-    write_file:       { icon: '↙', label: 'write' },
-    run_command:      { icon: '⚡', label: 'exec' },
-    search_workspace: { icon: '⊙', label: 'scan' },
-  };
-  const { icon, label } = meta[name || ''] ?? { icon: '◦', label: name ?? 'tool' };
-
-  if (rejected) {
-    return (
-      <Box paddingLeft={4} marginBottom={0}>
-        <Text color="red">× </Text>
-        <Text color="red" bold>{label}</Text>
-        <Text dimColor>  denied by user</Text>
-      </Box>
-    );
+  if (results.length === 0) {
+    try {
+      const startIdx = text.indexOf('{');
+      const endIdx = text.lastIndexOf('}');
+      if (startIdx !== -1 && endIdx !== -1) {
+        const jsonStr = text.substring(startIdx, endIdx + 1);
+        const obj = JSON.parse(jsonStr);
+        if (obj.name) {
+          const raw = obj.parameters ?? obj.arguments ?? obj.input ?? obj.args ?? {};
+          const args = typeof raw === 'string' ? JSON.parse(raw) : raw;
+          const matched = [...knownTools].find((t) => obj.name === t || obj.name.includes(t));
+          if (matched) results.push({ name: matched, args });
+        }
+      }
+    } catch {}
   }
 
-  return (
-    <Box paddingLeft={4} marginBottom={0}>
-      <Text color={success ? 'blackBright' : 'red'}>{icon} </Text>
-      <Text color={success ? 'blackBright' : 'red'} bold>{label}</Text>
-      {detail ? <Text dimColor>  {detail}</Text> : null}
-    </Box>
-  );
-});
-
-// ─── Message components ───────────────────────────────────────────────────────
-
-const UserMessage = React.memo(function UserMessage({ content, timestamp }: { content: string; timestamp?: string }) {
-  return (
-    <Box flexDirection="column" marginBottom={1}>
-      <Box>
-        <Text color="blue" bold>you</Text>
-        {timestamp && <Text dimColor>  {timestamp}</Text>}
-      </Box>
-      <Box paddingLeft={2} marginTop={0}>
-        <Text color="white" wrap="wrap">{content}</Text>
-      </Box>
-    </Box>
-  );
-});
-
-const AgentMessage = React.memo(function AgentMessage({
-  content,
-  timestamp,
-  streaming,
-}: {
-  content: string;
-  timestamp?: string;
-  streaming?: boolean;
-}) {
-  return (
-    <Box flexDirection="column" marginBottom={1}>
-      <Box>
-        <Text color="cyan" bold>◆ assistant</Text>
-        {timestamp && !streaming && <Text dimColor>  {timestamp}</Text>}
-        {streaming && <Text color="cyan" dimColor>  writing…</Text>}
-      </Box>
-      <Box paddingLeft={2} marginTop={0} flexDirection="column">
-        {/* Use plain Text during streaming to avoid OOM from re-running the
-            regex tokenizer on every incoming chunk. Highlight only after done. */}
-        {streaming
-          ? <Text wrap="wrap" color="white">{content}</Text>
-          : <SyntaxHighlighter text={content} />}
-      </Box>
-    </Box>
-  );
-});
-
-// ─── Empty / Welcome state ────────────────────────────────────────────────────
-
-
-
-
-function WelcomeHints({
-  model,
-  suggestions,
-  loading,
-}: {
-  model: string;
-  suggestions: string[];
-  loading: boolean;
-}) {
-  return (
-    <Box flexDirection="column" marginTop={1} marginBottom={1}>
-      <Box marginBottom={1}>
-        <Text color="blackBright">Ready  ·  </Text>
-        <Text color="cyan">{model}</Text>
-      </Box>
-      <Box marginBottom={1}>
-        {loading ? (
-          <Box>
-            <Text color="cyan"><Spinner type="dots" /></Text>
-            <Text dimColor> Generating suggestions…</Text>
-          </Box>
-        ) : (
-          <Text dimColor>Try asking:</Text>
-        )}
-      </Box>
-      {!loading && suggestions.map((s, i) => (
-        <Box key={i} paddingLeft={2} marginBottom={0}>
-          <Text dimColor>  {i + 1}.  </Text>
-          <Text color="blackBright">{s}</Text>
-        </Box>
-      ))}
-    </Box>
-  );
-}
-
-// ─── Setup screen wrapper ─────────────────────────────────────────────────────
-
-function SetupShell({
-  stepNum,
-  label,
-  description,
-  children,
-  loading,
-  error,
-}: {
-  stepNum: number;
-  label: string;
-  description: string;
-  children: React.ReactNode;
-  loading?: boolean;
-  error?: string | null;
-}) {
-  return (
-    <Box flexDirection="column" paddingX={3} paddingTop={1} paddingBottom={1}>
-
-      {/* Big ASCII banner */}
-      <BigLogo />
-
-      {/* Subtitle + version */}
-      <Box justifyContent="space-between" marginBottom={1}>
-        <Text dimColor>Local AI agent</Text>
-        <Text dimColor>v1.1.0</Text>
-      </Box>
-
-      <Divider />
-
-      {/* Step progress */}
-      <Box flexDirection="column" marginTop={1} marginBottom={1}>
-        <StepBar current={stepNum} total={2} />
-        <Box marginTop={0}>
-          <Text color="white" bold>{label}</Text>
-        </Box>
-        <Text dimColor>{description}</Text>
-      </Box>
-
-      {/* Content */}
-      <Box marginTop={1} marginBottom={1}>
-        {children}
-      </Box>
-
-      {/* Loading */}
-      {loading && (
-        <Box marginBottom={1}>
-          <Text color="cyan"><Spinner type="dots" /></Text>
-          <Text color="blackBright"> Connecting…</Text>
-        </Box>
-      )}
-
-      {/* Error */}
-      {error && (
-        <Box marginBottom={1}>
-          <Text color="red">✖  </Text>
-          <Text color="red">{error}</Text>
-        </Box>
-      )}
-
-      <Divider />
-      {/* Key hints */}
-      <Box marginTop={1}>
-        <Text dimColor>↑↓</Text>
-        <Text color="blackBright"> navigate   </Text>
-        <Text dimColor>Enter</Text>
-        <Text color="blackBright"> select   </Text>
-        <Text dimColor>Esc</Text>
-        <Text color="blackBright"> back   </Text>
-        <Text dimColor>Ctrl+C</Text>
-        <Text color="blackBright"> quit</Text>
-      </Box>
-    </Box>
-  );
-}
-
-// ─── Item renderer for SelectInput ───────────────────────────────────────────
-
-function ProviderItem({ label, isSelected }: { label: string; isSelected?: boolean }) {
-  const descriptions: Record<string, string> = {
-    Ollama: 'Local models via ollama.ai',
-    'LM Studio': 'Local models via lmstudio.ai',
-    LocalAI: 'Drop-in OpenAI replacement',
-    vLLM: 'High-throughput serving engine',
-    Jan: 'Offline AI desktop application',
-    GPT4All: 'CPU-optimized local ecosystem',
-    'Llama.cpp': 'Standalone C++ inference engine',
-    Oobabooga: 'Gradio web UI for LLMs',
-  };
-  return (
-    <Box>
-      <Text color={isSelected ? 'cyan' : 'blackBright'}>{isSelected ? '▶ ' : '  '}</Text>
-      <Text color={isSelected ? 'white' : 'blackBright'} bold={isSelected}>{label}</Text>
-      <Text dimColor>   {descriptions[label] ?? ''}</Text>
-    </Box>
-  );
-}
-
-function ModelItem({ label, isSelected }: { label: string; isSelected?: boolean }) {
-  return (
-    <Box>
-      <Text color={isSelected ? 'cyan' : 'blackBright'}>{isSelected ? '▶ ' : '  '}</Text>
-      <Text color={isSelected ? 'white' : 'blackBright'} bold={isSelected}>{label}</Text>
-    </Box>
-  );
+  return results;
 }
 
 // ─── Main App ─────────────────────────────────────────────────────────────────
 
-interface AppProps {
+export interface AppProps {
   config: LocusConfig | null;
   initialHistory: Message[];
   initialProvider: Provider | null;
@@ -405,35 +163,12 @@ export function App({
     (async () => {
       try {
         const client = getLocalClient(provider);
-        const response = await client.chat.completions.create({
-          model: selectedModel,
-          messages: [
-            {
-              role: 'user',
-              content:
-                'Generate exactly 4 short, diverse example prompts that a developer might ask a local AI CLI assistant. ' +
-                'Cover different areas: coding help, file operations, shell commands, and a conceptual question. ' +
-                'Reply ONLY with a valid JSON array of 4 strings, no explanation, no markdown. Example format: ["prompt1","prompt2","prompt3","prompt4"]',
-            },
-          ],
-          stream: false,
-        } as any, { signal: suggestionController.signal });
-
-        if (cancelled) return;
-
-        const raw: string = (response as any).choices?.[0]?.message?.content?.trim() ?? '';
-        // Extract JSON array from the response (handle models that wrap in backticks)
-        const jsonMatch = raw.match(/\[.*\]/s);
-        if (jsonMatch) {
-          const parsed = JSON.parse(jsonMatch[0]);
-          
-          if (Array.isArray(parsed) && parsed.length > 0) {
-            setWelcomeSuggestions(parsed.slice(0, 4).map(String));
-            return;
-          }
-        }
-        // Fallback if parsing fails
-        setWelcomeSuggestions(FALLBACK_SUGGESTIONS);
+        const suggestions = await fetchPromptSuggestions(
+          client,
+          selectedModel,
+          suggestionController.signal
+        );
+        if (!cancelled) setWelcomeSuggestions(suggestions);
       } catch {
         if (!cancelled) setWelcomeSuggestions(FALLBACK_SUGGESTIONS);
       } finally {
@@ -441,8 +176,8 @@ export function App({
       }
     })();
 
-    return () => { 
-      cancelled = true; 
+    return () => {
+      cancelled = true;
       suggestionController.abort();
     };
   }, [step]);
@@ -483,28 +218,26 @@ export function App({
       const total = sessionList.length + 1; // +1 for "new session" row
 
       if (key.escape) {
-        if (confirmDelete) { setConfirmDelete(false); return; }
+        if (confirmDelete) {
+          setConfirmDelete(false);
+          return;
+        }
         setSessionPickerIndex(0);
         setStep('CHAT');
         return;
       }
       if (key.upArrow) {
         setConfirmDelete(false);
-        setSessionPickerIndex(i => (i <= 0 ? total - 1 : i - 1));
+        setSessionPickerIndex((i) => (i <= 0 ? total - 1 : i - 1));
         return;
       }
       if (key.downArrow) {
         setConfirmDelete(false);
-        setSessionPickerIndex(i => (i >= total - 1 ? 0 : i + 1));
+        setSessionPickerIndex((i) => (i >= total - 1 ? 0 : i + 1));
         return;
       }
       if (key.return) {
-        // Handled async in the screen block via doSelectSession — trigger via a temp state flag
-        // Instead, we read focusedId from allItems inline here
-        const allItems = [
-          ...sessionList.map(s => ({ id: s.id })),
-          { id: '__new__' },
-        ];
+        const allItems = [...sessionList.map((s) => ({ id: s.id })), { id: '__new__' }];
         const focusedId = allItems[sessionPickerIndex]?.id ?? '__new__';
         if (confirmDelete) {
           // Second Enter also confirms delete
@@ -513,7 +246,7 @@ export function App({
               await deleteSession(focusedId);
               const updated = await listSessionsDetail();
               setSessionList(updated);
-              setSessionPickerIndex(i => Math.min(i, Math.max(0, updated.length - 1)));
+              setSessionPickerIndex((i) => Math.min(i, Math.max(0, updated.length - 1)));
               setConfirmDelete(false);
             }
           })();
@@ -522,31 +255,41 @@ export function App({
         // Load and restore the selected session
         (async () => {
           if (focusedId === '__new__') {
-            setHistory([]); sessionIdRef.current = null;
-            setSessionPickerIndex(0); setStep('CHAT');
+            setHistory([]);
+            sessionIdRef.current = null;
+            setSessionPickerIndex(0);
+            setStep('CHAT');
             return;
           }
           setLoading(true);
           try {
             const session = await loadSession(focusedId);
-            if (session) { setHistory(session.messages as Message[]); sessionIdRef.current = focusedId; }
-          } catch { setErrorMsg('Failed to load session.'); }
-          finally { setLoading(false); setSessionPickerIndex(0); setConfirmDelete(false); setStep('CHAT'); }
+            if (session) {
+              setHistory(session.messages as Message[]);
+              sessionIdRef.current = focusedId;
+            }
+          } catch {
+            setErrorMsg('Failed to load session.');
+          } finally {
+            setLoading(false);
+            setSessionPickerIndex(0);
+            setConfirmDelete(false);
+            setStep('CHAT');
+          }
         })();
         return;
       }
       // D key — delete with confirmation
       if (input.toLowerCase() === 'd') {
-        const allItems = [...sessionList.map(s => ({ id: s.id })), { id: '__new__' }];
+        const allItems = [...sessionList.map((s) => ({ id: s.id })), { id: '__new__' }];
         const focusedId = allItems[sessionPickerIndex]?.id;
         if (!focusedId || focusedId === '__new__') return;
         if (confirmDelete) {
-          // Second D confirms
           (async () => {
             await deleteSession(focusedId);
             const updated = await listSessionsDetail();
             setSessionList(updated);
-            setSessionPickerIndex(i => Math.min(i, Math.max(0, updated.length - 1)));
+            setSessionPickerIndex((i) => Math.min(i, Math.max(0, updated.length - 1)));
             setConfirmDelete(false);
           })();
         } else {
@@ -561,16 +304,16 @@ export function App({
     if (step === 'CHAT' && !loading && !pendingApproval) {
       // Command palette navigation when query starts with '/'
       const paletteMatches = query.startsWith('/')
-        ? SLASH_COMMANDS.filter(c => c.cmd.startsWith(query.trim().toLowerCase()))
+        ? SLASH_COMMANDS.filter((c) => c.cmd.startsWith(query.trim().toLowerCase()))
         : [];
 
       if (paletteMatches.length > 0) {
         if (key.upArrow) {
-          setCmdPickerIndex(i => (i <= 0 ? paletteMatches.length - 1 : i - 1));
+          setCmdPickerIndex((i) => (i <= 0 ? paletteMatches.length - 1 : i - 1));
           return;
         }
         if (key.downArrow) {
-          setCmdPickerIndex(i => (i >= paletteMatches.length - 1 ? 0 : i + 1));
+          setCmdPickerIndex((i) => (i >= paletteMatches.length - 1 ? 0 : i + 1));
           return;
         }
         // Tab auto-completes the highlighted (or first) item
@@ -621,10 +364,15 @@ export function App({
       return; // swallow all other keys during approval
     }
 
-    if (key.ctrl && input === 'p') { setErrorMsg(null); setStep('SELECT_PROVIDER'); }
+    if (key.ctrl && input === 'p') {
+      setErrorMsg(null);
+      setStep('SELECT_PROVIDER');
+    }
     if (key.ctrl && input === 'n') {
-      if (models.length > 0) { setErrorMsg(null); setStep('SELECT_MODEL'); }
-      else setErrorMsg('No provider connected. Use Ctrl+P first.');
+      if (models.length > 0) {
+        setErrorMsg(null);
+        setStep('SELECT_MODEL');
+      } else setErrorMsg('No provider connected. Use Ctrl+P first.');
     }
 
     // Ctrl+S — save current provider + model as default
@@ -653,12 +401,11 @@ export function App({
     setLoading(true);
     setErrorMsg(null);
     try {
-      // Save it temporarily in config state so future calls use it
-      setConfig(prev => ({
+      setConfig((prev) => ({
         ...(prev || { defaultProvider: 'ollama', defaultModel: '', autoApprove: [] }),
-        baseURLs: { ...(prev?.baseURLs || {}), [provider]: url }
+        baseURLs: { ...(prev?.baseURLs || {}), [provider]: url },
       }));
-      
+
       const activeModels = await fetchLocalModels(provider, url);
       if (activeModels.length === 0) throw new Error('No running models found at this URL.');
       setModels(activeModels);
@@ -675,65 +422,18 @@ export function App({
     setStep('CHAT');
   };
 
-  // ── Pseudo-tool-call detection ──────────────────────────────────────────────
-  // Some local models (e.g. smaller Ollama weights) don't understand OpenAI's
-  // native function-calling protocol. Instead of emitting a tool_calls delta,
-  // they output raw JSON text like:
-  //   {"name": "read_file", "parameters": {"filePath": "..."} }
-  // This helper detects that pattern and normalises it into a real tool call.
-  function parsePseudoToolCalls(text: string): Array<{ name: string; args: Record<string, any> }> {
-    const results: Array<{ name: string; args: Record<string, any> }> = [];
-    const knownTools = new Set(['read_file', 'write_file', 'run_command', 'search_workspace', 'browser_action']);
-
-    const lines = text.split('\n');
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (!trimmed.startsWith('{') || !trimmed.endsWith('}')) continue;
-      try {
-        const obj = JSON.parse(trimmed);
-        if (obj.name) {
-          const raw = obj.parameters ?? obj.arguments ?? obj.input ?? obj.args ?? {};
-          const args = typeof raw === 'string' ? JSON.parse(raw) : raw;
-          const matched = [...knownTools].find(t => obj.name === t || obj.name.includes(t));
-          if (matched) results.push({ name: matched, args });
-        }
-      } catch {}
-    }
-
-    if (results.length === 0) {
-      try {
-        const startIdx = text.indexOf('{');
-        const endIdx = text.lastIndexOf('}');
-        if (startIdx !== -1 && endIdx !== -1) {
-          const jsonStr = text.substring(startIdx, endIdx + 1);
-          const obj = JSON.parse(jsonStr);
-          if (obj.name) {
-            const raw = obj.parameters ?? obj.arguments ?? obj.input ?? obj.args ?? {};
-            const args = typeof raw === 'string' ? JSON.parse(raw) : raw;
-            const matched = [...knownTools].find(t => obj.name === t || obj.name.includes(t));
-            if (matched) results.push({ name: matched, args });
-          }
-        }
-      } catch {}
-    }
-    
-    return results;
-  }
-
   // ── Agent loop ────────────────────────────────────────────────────────────
   const handleSubmitChat = async () => {
-    // CRITICAL: Must check loading state immediately on entry to short-circuit race conditions
     if (!query.trim() || loading) return;
 
     // ── Slash commands ────────────────────────────────────────────────────
-    // If palette is open and an item is highlighted, Enter picks it
     const paletteMatches = query.startsWith('/')
-      ? SLASH_COMMANDS.filter(c => c.cmd.startsWith(query.trim().toLowerCase()))
+      ? SLASH_COMMANDS.filter((c) => c.cmd.startsWith(query.trim().toLowerCase()))
       : [];
     if (paletteMatches.length > 0 && cmdPickerIndex >= 0) {
       setQuery(paletteMatches[cmdPickerIndex].cmd);
       setCmdPickerIndex(-1);
-      return; // let the user confirm with a second Enter
+      return;
     }
 
     const cmd = query.trim().toLowerCase();
@@ -751,7 +451,6 @@ export function App({
       if (models.length > 0) {
         setStep('SELECT_MODEL');
       } else {
-        // Need to fetch models first if provider hasn't been connected yet
         setLoading(true);
         try {
           const activeModels = await fetchLocalModels(provider, config?.baseURLs?.[provider as any]);
@@ -786,10 +485,11 @@ export function App({
       setHistoryIndex(-1);
       setDraftQuery('');
       const list = config?.autoApprove || [];
-      const content = list.length === 0 
-        ? 'Your auto-approve whitelist is currently empty.'
-        : `**Auto-approved patterns:**\n${list.map(l => `- ${l}`).join('\n')}\n\nType \`/whitelist clear\` to reset it.`;
-      setHistory(prev => [...prev, { role: 'assistant', content, timestamp: now() }]);
+      const content =
+        list.length === 0
+          ? 'Your auto-approve whitelist is currently empty.'
+          : `**Auto-approved patterns:**\n${list.map((l) => `- ${l}`).join('\n')}\n\nType \`/whitelist clear\` to reset it.`;
+      setHistory((prev) => [...prev, { role: 'assistant', content, timestamp: now() }]);
       return;
     }
 
@@ -797,23 +497,25 @@ export function App({
       setQuery('');
       setHistoryIndex(-1);
       setDraftQuery('');
-      const newConfig: LocusConfig = { 
-        defaultProvider: 'ollama', 
-        defaultModel: '', 
-        ...config, 
-        autoApprove: [] 
+      const newConfig: LocusConfig = {
+        defaultProvider: 'ollama',
+        defaultModel: '',
+        ...config,
+        autoApprove: [],
       };
       setConfig(newConfig);
       saveConfig(newConfig).catch(() => {});
-      setHistory(prev => [...prev, { role: 'assistant', content: 'Whitelist cleared successfully.', timestamp: now() }]);
+      setHistory((prev) => [
+        ...prev,
+        { role: 'assistant', content: 'Whitelist cleared successfully.', timestamp: now() },
+      ]);
       return;
     }
 
     const userInput = query;
     const ts = now();
 
-    // Save input history for up/down arrow navigation
-    setInputHistory(prev => [...prev, userInput]);
+    setInputHistory((prev) => [...prev, userInput]);
     setHistoryIndex(-1);
     setDraftQuery('');
 
@@ -889,7 +591,11 @@ export function App({
               for (const tc of delta.tool_calls) {
                 const index = tc.index;
                 if (!toolCalls[index]) {
-                  toolCalls[index] = { id: tc.id || '', type: 'function', function: { name: tc.function?.name || '', arguments: '' } };
+                  toolCalls[index] = {
+                    id: tc.id || '',
+                    type: 'function',
+                    function: { name: tc.function?.name || '', arguments: '' },
+                  };
                 }
                 if (tc.function?.name) toolCalls[index].function.name += tc.function.name;
                 if (tc.function?.arguments) toolCalls[index].function.arguments += tc.function.arguments;
@@ -898,7 +604,6 @@ export function App({
           }
         } catch (err: any) {
           if (err.name === 'AbortError') {
-            // User aborted the stream — keep whatever was buffered and stop the loop
             break;
           }
           throw err;
@@ -909,22 +614,18 @@ export function App({
         const finalContent = accumulatedContent || null;
 
         // ── Pseudo-tool-call intercept ──────────────────────────────────────
-        // If the model printed JSON instead of using proper tool_calls, handle it.
         let isPseudoToolCall = false;
         if (finalContent && toolCalls.length === 0) {
           const pseudoCalls = parsePseudoToolCalls(finalContent);
           if (pseudoCalls.length > 0) {
             isPseudoToolCall = true;
-            // Don't add the raw JSON to history — treat it as a silent tool call
             setStreamingContent('');
-            // Synthesise fake tool_call objects
             toolCalls = pseudoCalls.map((pseudo, idx) => ({
               id: `pseudo-${Date.now()}-${idx}`,
               function: { name: pseudo.name, arguments: JSON.stringify(pseudo.args) },
             }));
           }
         }
-        // ───────────────────────────────────────────────────────────────────
 
         if (finalContent && toolCalls.length === 0) {
           localHistory.push({ role: 'assistant', content: finalContent, timestamp: now() });
@@ -943,7 +644,6 @@ export function App({
           for (const call of toolCalls) {
             const name = normalizeToolName(call.function.name);
 
-            // Safe argument parsing — bad JSON should not crash the agent loop
             let args: Record<string, any>;
             try {
               args = JSON.parse(call.function.arguments || '{}');
@@ -956,26 +656,35 @@ export function App({
             // ── Security gate for destructive tools ──────────────────────
             let result: string;
             if (GUARDED_TOOLS.has(name)) {
-              const execName = name === 'run_command'
-                ? (args.command ?? '').trim().split(/\s+/)[0]
-                : '';
+              const execName =
+                name === 'run_command' ? (args.command ?? '').trim().split(/\s+/)[0] : '';
               const pattern = name === 'run_command' ? `run_command:${execName}` : name;
 
               if (!config?.autoApprove?.includes(pattern)) {
                 const approvalResult = await requestApproval(name, args, pattern);
                 if (!approvalResult.approved) {
-                  localHistory.push({ role: 'tool', name, tool_call_id: call.id, content: JSON.stringify({ denied: true }), rejected: true });
+                  localHistory.push({
+                    role: 'tool',
+                    name,
+                    tool_call_id: call.id,
+                    content: JSON.stringify({ denied: true }),
+                    rejected: true,
+                  });
                   continue;
                 }
                 if (approvalResult.always) {
-                  const newConfig: LocusConfig = { defaultProvider: 'ollama', defaultModel: '', ...config, autoApprove: [...(config?.autoApprove ?? []), pattern] };
+                  const newConfig: LocusConfig = {
+                    defaultProvider: 'ollama',
+                    defaultModel: '',
+                    ...config,
+                    autoApprove: [...(config?.autoApprove ?? []), pattern],
+                  };
                   setConfig(newConfig);
                   await saveConfig(newConfig);
                 }
               }
             }
             result = await executeTool(name, args);
-            // ─────────────────────────────────────────────────────────────
 
             localHistory.push({ role: 'tool', name, tool_call_id: call.id, content: result });
           }
@@ -993,7 +702,6 @@ export function App({
       setLoading(false);
       setAgentStatus(null);
       setStreamingContent('');
-      // Auto-save session after every completed AI turn
       persistSession(provider, selectedModel, localHistory);
     }
   };
@@ -1026,7 +734,7 @@ export function App({
     );
   }
 
-  // ── SCREEN: Model ────────────────────────────────────────────────────────
+  // ── SCREEN: URL ──────────────────────────────────────────────────────────
   if (step === 'SELECT_URL') {
     return (
       <SetupShell
@@ -1036,17 +744,14 @@ export function App({
         error={errorMsg}
         loading={loading}
       >
-        <Box paddingLeft={2} borderStyle="round" borderColor={errorMsg ? "red" : "cyan"}>
-           <TextInput
-             value={draftUrl}
-             onChange={setDraftUrl}
-             onSubmit={handleSelectUrlSubmit}
-           />
+        <Box paddingLeft={2} borderStyle="round" borderColor={errorMsg ? 'red' : 'cyan'}>
+          <TextInput value={draftUrl} onChange={setDraftUrl} onSubmit={handleSelectUrlSubmit} />
         </Box>
       </SetupShell>
     );
   }
 
+  // ── SCREEN: Model ────────────────────────────────────────────────────────
   if (step === 'SELECT_MODEL') {
     return (
       <SetupShell
@@ -1056,7 +761,7 @@ export function App({
         error={errorMsg}
       >
         <SelectInput
-          items={models.map(m => ({ label: m, value: m }))}
+          items={models.map((m) => ({ label: m, value: m }))}
           onSelect={handleSelectModel}
           itemComponent={ModelItem}
         />
@@ -1066,56 +771,24 @@ export function App({
 
   // ── SCREEN: Session Picker ────────────────────────────────────────────────
   if (step === 'SELECT_SESSION') {
-    // All items including the fixed "+ New session" row at the bottom
     const allItems = [
-      ...sessionList.map(s => {
+      ...sessionList.map((s) => {
         const date = new Date(s.createdAt).toLocaleString('en-GB', {
-          day: '2-digit', month: 'short',
-          hour: '2-digit', minute: '2-digit',
+          day: '2-digit',
+          month: 'short',
+          hour: '2-digit',
+          minute: '2-digit',
         });
-        return { label: `${date}  ${s.model}  (${s.turns} turn${s.turns !== 1 ? 's' : ''})`, id: s.id };
+        return {
+          label: `${date}  ${s.model}  (${s.turns} turn${s.turns !== 1 ? 's' : ''})`,
+          id: s.id,
+        };
       }),
       { label: '+ Start new session', id: '__new__' },
     ];
 
     const focusedId = allItems[sessionPickerIndex]?.id ?? '__new__';
     const isNewRow = focusedId === '__new__';
-
-    const doSelectSession = async (id: string) => {
-      if (id === '__new__') {
-        setHistory([]);
-        sessionIdRef.current = null;
-        setSessionPickerIndex(0);
-        setConfirmDelete(false);
-        setStep('CHAT');
-        return;
-      }
-      setLoading(true);
-      try {
-        const session = await loadSession(id);
-        if (session) {
-          setHistory(session.messages as Message[]);
-          sessionIdRef.current = id;
-        }
-      } catch {
-        setErrorMsg('Failed to load session.');
-      } finally {
-        setLoading(false);
-        setSessionPickerIndex(0);
-        setConfirmDelete(false);
-        setStep('CHAT');
-      }
-    };
-
-    const doDeleteFocused = async () => {
-      if (isNewRow) return;
-      await deleteSession(focusedId);
-      // Refresh the list and keep index in bounds
-      const updated = await listSessionsDetail();
-      setSessionList(updated);
-      setSessionPickerIndex(i => Math.min(i, Math.max(0, updated.length - 1)));
-      setConfirmDelete(false);
-    };
 
     return (
       <SetupShell
@@ -1145,11 +818,13 @@ export function App({
                 <Text color={focused ? 'white' : 'blackBright'} bold={focused}>
                   {item.label}
                 </Text>
-                {focused && !isNewRow && (
-                  confirmDelete
-                    ? <Text color="red" bold>  delete? [D] confirm   [Esc] cancel</Text>
-                    : <Text dimColor>  [D] delete</Text>
-                )}
+                {focused &&
+                  !isNewRow &&
+                  (confirmDelete ? (
+                    <Text color="red" bold>  delete? [D] confirm   [Esc] cancel</Text>
+                  ) : (
+                    <Text dimColor>  [D] delete</Text>
+                  ))}
               </Box>
             );
           })}
@@ -1159,12 +834,11 @@ export function App({
   }
 
   // Count only user turns for display
-  const turnCount = history.filter(m => m.role === 'user').length;
+  const turnCount = history.filter((m) => m.role === 'user').length;
 
   // ── SCREEN: Chat ─────────────────────────────────────────────────────────
   return (
     <Box flexDirection="column" paddingX={2} paddingTop={1} paddingBottom={1}>
-
       {/* ── Header ───────────────────────────────────────────── */}
       <Box justifyContent="space-between" marginBottom={0}>
         <Logo />
@@ -1199,20 +873,17 @@ export function App({
           <Text dimColor>Ctrl+C</Text>
           <Text color="blackBright"> quit</Text>
         </Box>
-        {saveConfirmation
-          ? <Text color="green">✓ Saved as default</Text>
-          : turnCount > 0 && (
-              <Text dimColor>{turnCount} turn{turnCount !== 1 ? 's' : ''}</Text>
-            )
-        }
+        {saveConfirmation ? (
+          <Text color="green">✓ Saved as default</Text>
+        ) : (
+          turnCount > 0 && <Text dimColor>{turnCount} turn{turnCount !== 1 ? 's' : ''}</Text>
+        )}
       </Box>
-
 
       <Divider />
 
       {/* ── Conversation ───────────────────────────────────────────────── */}
       <Box flexDirection="column" marginTop={1}>
-
         {/* Empty / welcome state */}
         {history.length === 0 && !loading && (
           <WelcomeHints
@@ -1225,21 +896,29 @@ export function App({
         {history.map((msg, idx) => {
           switch (msg.role) {
             case 'tool':
-              return <ToolEntry key={idx} name={msg.name} content={msg.content} rejected={msg.rejected} />;
+              return (
+                <ToolEntry
+                  key={idx}
+                  name={msg.name}
+                  content={msg.content}
+                  rejected={msg.rejected}
+                />
+              );
             case 'user':
-              return msg.content ? <UserMessage key={idx} content={msg.content} timestamp={msg.timestamp} /> : null;
+              return msg.content ? (
+                <UserMessage key={idx} content={msg.content} timestamp={msg.timestamp} />
+              ) : null;
             case 'assistant':
-              // Skip tool-call wrapper messages with no text
-              return msg.content?.trim() ? <AgentMessage key={idx} content={msg.content} timestamp={msg.timestamp} /> : null;
+              return msg.content?.trim() ? (
+                <AgentMessage key={idx} content={msg.content} timestamp={msg.timestamp} />
+              ) : null;
             default:
               return null;
           }
         })}
 
         {/* Live stream */}
-        {streamingContent.length > 0 && (
-          <AgentMessage content={streamingContent} streaming />
-        )}
+        {streamingContent.length > 0 && <AgentMessage content={streamingContent} streaming />}
       </Box>
 
       {/* ── Loading / status ────────────────────────────────────────────── */}
@@ -1274,7 +953,13 @@ export function App({
             <Text color="red" bold>[N]</Text>
             <Text color="blackBright"> deny   </Text>
             <Text color="green" bold>[A]</Text>
-            <Text color="blackBright"> always allow {pendingApproval.pattern.startsWith('run_command:') ? `'${pendingApproval.pattern.split(':')[1]}' commands` : pendingApproval.pattern}</Text>
+            <Text color="blackBright">
+              {' '}
+              always allow{' '}
+              {pendingApproval.pattern.startsWith('run_command:')
+                ? `'${pendingApproval.pattern.split(':')[1]}' commands`
+                : pendingApproval.pattern}
+            </Text>
           </Box>
         </Box>
       )}
@@ -1292,7 +977,7 @@ export function App({
       {/* ── Command palette (shown when query starts with /) ─────────────── */}
       {(() => {
         if (!query.startsWith('/') || loading) return null;
-        const matches = SLASH_COMMANDS.filter(c =>
+        const matches = SLASH_COMMANDS.filter((c) =>
           c.cmd.startsWith(query.trim().toLowerCase())
         );
         if (matches.length === 0) return null;
@@ -1300,10 +985,16 @@ export function App({
           <Box flexDirection="column" marginTop={1} paddingLeft={2}>
             {matches.map((c, i) => (
               <Box key={c.cmd}>
-                <Text color={i === cmdPickerIndex ? 'cyan' : 'blackBright'} bold={i === cmdPickerIndex}>
+                <Text
+                  color={i === cmdPickerIndex ? 'cyan' : 'blackBright'}
+                  bold={i === cmdPickerIndex}
+                >
                   {i === cmdPickerIndex ? '▶ ' : '  '}
                 </Text>
-                <Text color={i === cmdPickerIndex ? 'white' : 'blackBright'} bold={i === cmdPickerIndex}>
+                <Text
+                  color={i === cmdPickerIndex ? 'white' : 'blackBright'}
+                  bold={i === cmdPickerIndex}
+                >
                   {c.cmd}
                 </Text>
                 <Text dimColor>  {c.description}</Text>
@@ -1323,12 +1014,15 @@ export function App({
         </Text>
         <TextInput
           value={query}
-          onChange={val => { setErrorMsg(null); setCmdPickerIndex(-1); setQuery(val); }}
+          onChange={(val) => {
+            setErrorMsg(null);
+            setCmdPickerIndex(-1);
+            setQuery(val);
+          }}
           onSubmit={handleSubmitChat}
           placeholder={loading ? 'waiting for response…' : 'Ask anything, give a task, or type / for commands…'}
         />
       </Box>
-
     </Box>
   );
 }

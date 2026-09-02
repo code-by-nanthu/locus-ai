@@ -1,7 +1,7 @@
 import { execa } from 'execa';
 import * as readline from 'readline';
-import { loadConfig } from '../core/config.js';
-import { getLocalClient } from '../services/llm.js';
+import { loadConfig } from '../../core/config.js';
+import { getLocalClient } from '../../services/llm.js';
 
 export async function runCommitCommand() {
   const config = await loadConfig();

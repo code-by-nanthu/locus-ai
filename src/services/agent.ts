@@ -3,7 +3,7 @@ import type OpenAI from 'openai';
 import { executeTool } from './tools.js';
 import { saveSession } from '../core/session.js';
 import { saveConfig } from '../core/config.js';
-import { GUARDED_TOOLS } from '../core/constants.js';
+import { GUARDED_TOOLS, FALLBACK_SUGGESTIONS } from '../core/constants.js';
 import type { LocusConfig } from '../core/config.js';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
@@ -175,3 +175,45 @@ export async function runAgentLoop(
     }
   }
 }
+
+/**
+ * Generates 4 context-aware starter prompts for the UI using the local LLM.
+ * Falls back to hardcoded FALLBACK_SUGGESTIONS if generation or parsing fails.
+ */
+export async function fetchPromptSuggestions(
+  client: OpenAI,
+  model: string,
+  signal?: AbortSignal
+): Promise<string[]> {
+  try {
+    const response = await client.chat.completions.create(
+      {
+        model,
+        messages: [
+          {
+            role: 'user',
+            content:
+              'Generate exactly 4 short, diverse example prompts that a developer might ask a local AI CLI assistant. ' +
+              'Cover different areas: coding help, file operations, shell commands, and a conceptual question. ' +
+              'Reply ONLY with a valid JSON array of 4 strings, no explanation, no markdown. Example format: ["prompt1","prompt2","prompt3","prompt4"]',
+          },
+        ],
+        stream: false,
+      } as any,
+      { signal }
+    );
+
+    const raw: string = (response as any).choices?.[0]?.message?.content?.trim() ?? '';
+    const jsonMatch = raw.match(/\[.*\]/s);
+    if (jsonMatch) {
+      const parsed = JSON.parse(jsonMatch[0]);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        return parsed.slice(0, 4).map(String);
+      }
+    }
+    return FALLBACK_SUGGESTIONS;
+  } catch {
+    return FALLBACK_SUGGESTIONS;
+  }
+}
+

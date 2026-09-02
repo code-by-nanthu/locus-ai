@@ -10,7 +10,7 @@ export function SyntaxHighlighter({ text }: CodeHighlighterProps) {
 
   const lines = text.split('\n');
   const renderedElements: React.ReactNode[] = [];
-  
+
   let isInCodeBlock = false;
   let currentLanguage = '';
   let currentCodeLines: string[] = [];
@@ -33,11 +33,11 @@ export function SyntaxHighlighter({ text }: CodeHighlighterProps) {
       const lang = currentLanguage;
 
       renderedElements.push(
-        <Box 
-          key={`code-${keyIdx}`} 
-          flexDirection="column" 
-          borderStyle="single" 
-          borderColor="blue" 
+        <Box
+          key={`code-${keyIdx}`}
+          flexDirection="column"
+          borderStyle="single"
+          borderColor="blue"
           paddingX={1}
           marginY={1}
           backgroundColor="black"
@@ -48,16 +48,24 @@ export function SyntaxHighlighter({ text }: CodeHighlighterProps) {
             </Box>
           ) : null}
           {linesToRender.map((line, lIdx) => {
-            const highlightedLine = line.split(/(\b(?:const|let|var|function|return|import|from|export|class|if|else|for|while|async|await|try|catch)\b|['"`][\s\S]*?['"`]|\/\/.*)/g).map((token, tIdx) => {
-              if (!token) return null;
-              if (/^\b(const|let|var|function|return|import|from|export|class|if|else|for|while|async|await|try|catch)\b$/.test(token)) {
-                return <Text key={tIdx} color="magenta" bold>{token}</Text>;
-              }
-              if (/^['"`]/.test(token)) return <Text key={tIdx} color="yellow">{token}</Text>;
-              if (/^\/\//.test(token)) return <Text key={tIdx} color="gray" italic>{token}</Text>;
-              if (/^\b\d+\b$/.test(token)) return <Text key={tIdx} color="cyan">{token}</Text>;
-              return <Text key={tIdx} color="white">{token}</Text>;
-            });
+            const highlightedLine = line
+              .split(
+                /(\b(?:const|let|var|function|return|import|from|export|class|if|else|for|while|async|await|try|catch)\b|['"`][\s\S]*?['"`]|\/\/.*)/g
+              )
+              .map((token, tIdx) => {
+                if (!token) return null;
+                if (
+                  /^\b(const|let|var|function|return|import|from|export|class|if|else|for|while|async|await|try|catch)\b$/.test(
+                    token
+                  )
+                ) {
+                  return <Text key={tIdx} color="magenta" bold>{token}</Text>;
+                }
+                if (/^['"`]/.test(token)) return <Text key={tIdx} color="yellow">{token}</Text>;
+                if (/^\/\//.test(token)) return <Text key={tIdx} color="gray" italic>{token}</Text>;
+                if (/^\b\d+\b$/.test(token)) return <Text key={tIdx} color="cyan">{token}</Text>;
+                return <Text key={tIdx} color="white">{token}</Text>;
+              });
 
             return (
               <Box key={lIdx}>

@@ -1,6 +1,6 @@
 import * as fs from 'fs/promises';
 import * as path from 'path';
-import { loadSession, listSessions } from '../core/session.js';
+import { loadSession, listSessions } from '../../core/session.js';
 
 export async function runExportCommand(sessionId?: string) {
   let idToExport = sessionId;

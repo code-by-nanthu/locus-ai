@@ -1,84 +1,140 @@
-# Implementation Plan: Code Audit Fixes
+# Implementation Plan: Restructure `src/` to Symmetrical CLI & Modular Architecture
 
-Fixes are ordered by **dependency** — foundation files first, dependent files last.
-
-## Phase 1 — Foundation: `src/core/constants.ts` [NEW]
-Consolidate duplicated constants. Both `App.tsx` files and `ui.ts` will import from here.
-- `FALLBACK_SUGGESTIONS` array
-- `GUARDED_TOOLS` Set
-- `PROVIDER_LABELS` map (bonus — currently duplicated between web/CLI)
+This plan restructures the codebase into a clean, symmetrical architecture where CLI-specific code is isolated under `src/cli/` (mirroring `src/web/`), terminal components are split into focused submodules, hooks are centralized with consistent naming conventions, and shared agent utilities are unified.
 
 ---
 
-## Phase 2 — Core Services (low-risk, isolated)
+## Proposed Architecture
 
-### `src/core/session.ts`
-- Simplify `generateSessionId` regex chain (single `.slice` + `.replace`)
-- Rewrite `listSessionsDetail` using `Promise.allSettled` (flatter, clearer intent)
-
-### `src/services/llm.ts`
-- Make `getBaseURL` private, rename to `resolveBaseURL`
-- Update callers in same file
-
-### `src/services/tools.ts`
-- Remove obvious comment on line 121
-- Add exported `normalizeToolName()` utility
-- Fix path resolution guard comment (keep it)
-
----
-
-## Phase 3 — Extract Agent Service: `src/services/agent.ts` [NEW]
-Extract the SSE streaming agent loop out of `ui.ts`:
-```ts
-export async function runAgentTurn(
-  client: OpenAI,
-  config: LocusConfig,
-  history: Message[],
-  sessionId: string,
-  pendingApprovals: Map<...>,
-  onEvent: (event: SSEEvent) => void
-): Promise<void>
+```text
+src/
+├── index.tsx                         # CLI entry point & dispatcher
+│
+├── core/                             # Shared storage, schemas, config & constants
+│   ├── config.ts
+│   ├── constants.ts
+│   └── session.ts
+│
+├── services/                         # Shared services (LLM client, tools, agent utilities)
+│   ├── agent.ts                      # Agent streaming loop & prompt suggestion helper
+│   ├── llm.ts
+│   └── tools.ts
+│
+├── cli/                              # Dedicated CLI domain (Terminal UI / Ink)
+│   ├── commands/                     # Subcommand handlers
+│   │   ├── commit.ts
+│   │   ├── export.ts
+│   │   └── ui.ts
+│   ├── hooks/                        # Terminal React hooks
+│   │   ├── useApprovalGate.ts
+│   │   ├── useSessionManager.ts
+│   │   └── useTerminalSize.ts        # (renamed from use-terminal-size.ts)
+│   └── components/                   # Modular Ink components
+│       ├── App.tsx                   # Main CLI container & coordinator
+│       ├── chat/                     # Conversation UI components
+│       │   ├── UserMessage.tsx
+│       │   ├── AgentMessage.tsx
+│       │   ├── ToolEntry.tsx
+│       │   └── WelcomeHints.tsx
+│       ├── setup/                    # Setup wizard & picker components
+│       │   ├── SetupShell.tsx
+│       │   ├── StepBar.tsx
+│       │   ├── ProviderItem.tsx
+│       │   └── ModelItem.tsx
+│       └── common/                   # Shared terminal primitives
+│           ├── Divider.tsx
+│           ├── ElapsedTimer.tsx
+│           ├── Logo.tsx
+│           ├── ascii-art.ts
+│           └── SyntaxHighlighter.tsx
+│
+└── web/                              # Dedicated Web UI (Vite + React 19 + Tailwind)
+    ├── App.tsx
+    ├── index.css
+    ├── index.html
+    ├── main.tsx
+    └── public/
 ```
-The `runTool` helper and its authorization logic moves here too, cleaned up with guard clauses.
 
 ---
 
-## Phase 4 — Refactor `src/commands/ui.ts`
-- Remove local `FALLBACK_SUGGESTIONS`, `GUARDED_TOOLS` — import from constants
-- Delegate agent loop to `agent.ts`
-- Remove obvious comments
-- Fix `argsObj` → `parsedArgs`
+## Proposed Changes
+
+### 1. Shared Services & Core
+
+#### [MODIFY] [`src/services/agent.ts`](file:///Users/nanthups/Workspace/Learning/local-ai-cli/src/services/agent.ts)
+- Add exportable helper `fetchPromptSuggestions(client, model, signal?)` to eliminate duplication between `ui.ts` and `App.tsx`.
 
 ---
 
-## Phase 5 — Extract CLI Hooks
+### 2. CLI Hooks & Commands Reorganization
 
-### `src/hooks/useApprovalGate.ts` [NEW]
-Extract `requestApproval`, `pendingApproval` state, and `approvalResolveRef` from `App.tsx`.
+#### [NEW] [`src/cli/hooks/useTerminalSize.ts`](file:///Users/nanthups/Workspace/Learning/local-ai-cli/src/cli/hooks/useTerminalSize.ts)
+- Move and rename `src/components/use-terminal-size.ts` to `src/cli/hooks/useTerminalSize.ts` with camelCase naming.
 
-### `src/hooks/useSessionManager.ts` [NEW]
-Extract the save-session logic, `sessionIdRef`, and session listing state.
+#### [NEW] [`src/cli/hooks/useApprovalGate.ts`](file:///Users/nanthups/Workspace/Learning/local-ai-cli/src/cli/hooks/useApprovalGate.ts)
+- Relocate from `src/hooks/useApprovalGate.ts`.
+
+#### [NEW] [`src/cli/hooks/useSessionManager.ts`](file:///Users/nanthups/Workspace/Learning/local-ai-cli/src/cli/hooks/useSessionManager.ts)
+- Relocate from `src/hooks/useSessionManager.ts`.
+
+#### [DELETE] Old hooks directory files (`src/hooks/*`, `src/components/use-terminal-size.ts`).
+
+#### [NEW] [`src/cli/commands/commit.ts`](file:///Users/nanthups/Workspace/Learning/local-ai-cli/src/cli/commands/commit.ts)
+- Relocate from `src/commands/commit.ts` and update relative imports (`../../core/`, `../../services/`).
+
+#### [NEW] [`src/cli/commands/export.ts`](file:///Users/nanthups/Workspace/Learning/local-ai-cli/src/cli/commands/export.ts)
+- Relocate from `src/commands/export.ts` and update relative imports.
+
+#### [NEW] [`src/cli/commands/ui.ts`](file:///Users/nanthups/Workspace/Learning/local-ai-cli/src/cli/commands/ui.ts)
+- Relocate from `src/commands/ui.ts`, update relative imports and static assets path resolution.
+
+#### [DELETE] Old commands directory files (`src/commands/*`).
 
 ---
 
-## Phase 6 — Refactor `src/components/App.tsx`
-- Remove local `GUARDED_TOOLS`, `FALLBACK_SUGGESTIONS` — import from constants
-- Rename: `currentStream` → `streamingContent`, `isPseudo` → `isPseudoToolCall`, `keepRunningLoop` → inline `break`, `incomingBuffer` → `accumulatedContent`
-- Replace tool-name fallback chain with `normalizeToolName()`
-- Remove orphaned divider comment on line 836
-- Use `useApprovalGate` and `useSessionManager` hooks
-- Extract screen renders into named `render*` functions within the component for readability without full file splits (avoids prop-drilling explosion)
+### 3. CLI Modular Components
+
+#### [NEW] Common Components:
+- [`src/cli/components/common/Divider.tsx`](file:///Users/nanthups/Workspace/Learning/local-ai-cli/src/cli/components/common/Divider.tsx)
+- [`src/cli/components/common/ElapsedTimer.tsx`](file:///Users/nanthups/Workspace/Learning/local-ai-cli/src/cli/components/common/ElapsedTimer.tsx)
+- [`src/cli/components/common/Logo.tsx`](file:///Users/nanthups/Workspace/Learning/local-ai-cli/src/cli/components/common/Logo.tsx)
+- [`src/cli/components/common/ascii-art.ts`](file:///Users/nanthups/Workspace/Learning/local-ai-cli/src/cli/components/common/ascii-art.ts)
+- [`src/cli/components/common/SyntaxHighlighter.tsx`](file:///Users/nanthups/Workspace/Learning/local-ai-cli/src/cli/components/common/SyntaxHighlighter.tsx)
+
+#### [NEW] Chat Components:
+- [`src/cli/components/chat/UserMessage.tsx`](file:///Users/nanthups/Workspace/Learning/local-ai-cli/src/cli/components/chat/UserMessage.tsx)
+- [`src/cli/components/chat/AgentMessage.tsx`](file:///Users/nanthups/Workspace/Learning/local-ai-cli/src/cli/components/chat/AgentMessage.tsx)
+- [`src/cli/components/chat/ToolEntry.tsx`](file:///Users/nanthups/Workspace/Learning/local-ai-cli/src/cli/components/chat/ToolEntry.tsx)
+- [`src/cli/components/chat/WelcomeHints.tsx`](file:///Users/nanthups/Workspace/Learning/local-ai-cli/src/cli/components/chat/WelcomeHints.tsx)
+
+#### [NEW] Setup Components:
+- [`src/cli/components/setup/StepBar.tsx`](file:///Users/nanthups/Workspace/Learning/local-ai-cli/src/cli/components/setup/StepBar.tsx)
+- [`src/cli/components/setup/SetupShell.tsx`](file:///Users/nanthups/Workspace/Learning/local-ai-cli/src/cli/components/setup/SetupShell.tsx)
+- [`src/cli/components/setup/ProviderItem.tsx`](file:///Users/nanthups/Workspace/Learning/local-ai-cli/src/cli/components/setup/ProviderItem.tsx)
+- [`src/cli/components/setup/ModelItem.tsx`](file:///Users/nanthups/Workspace/Learning/local-ai-cli/src/cli/components/setup/ModelItem.tsx)
+
+#### [MODIFY] [`src/cli/components/App.tsx`](file:///Users/nanthups/Workspace/Learning/local-ai-cli/src/cli/components/App.tsx)
+- Deconstruct the 1,300+ line monolith by importing the extracted chat, setup, common components and hooks.
+- Retain state machine, hotkeys, and chat submission logic in a clean, concise container.
+
+#### [DELETE] Old components directory files (`src/components/*`).
 
 ---
 
-## Phase 7 — Fix `src/index.tsx`
-- Extract session resolution into `resolveInitialSession()` helper function
+### 4. Entry Point
+
+#### [MODIFY] [`src/index.tsx`](file:///Users/nanthups/Workspace/Learning/local-ai-cli/src/index.tsx)
+- Update imports to point to `./cli/components/App.js` and `./cli/commands/*.js`.
 
 ---
 
-## Phase 8 — Build & Verify
-- `pnpm build` — confirm zero TypeScript errors
-- Spot-check that session loading, agent loop, and tool authorization still work
+## Verification Plan
 
-> [!NOTE]
-> The `src/components/App.tsx` full screen-level split (into separate `SetupWizard.tsx`, `SessionPicker.tsx`, etc.) would require threading ~20 state values through props or a context. That's a larger refactor better done with React Context. I'll use **named render functions** inside the component for now as an intermediate improvement — this still dramatically reduces cognitive load without prop-drilling risk.
+### Automated Tests & Type Checking
+- Run `npx tsc --noEmit` to verify 100% type safety and resolved module paths.
+- Run `pnpm build` to verify that both the Vite web build and the TypeScript CLI distribution build succeed.
+
+### Manual Verification
+- Test `locus --help` / `pnpm start` (CLI launch).
+- Test CLI subcommands: `locus export`, `locus commit`, `locus sessions`.

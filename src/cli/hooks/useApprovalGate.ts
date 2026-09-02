@@ -8,12 +8,12 @@ export interface PendingApproval {
   pattern: string;
 }
 
-interface ApprovalResult {
+export interface ApprovalResult {
   approved: boolean;
   always: boolean;
 }
 
-interface UseApprovalGateReturn {
+export interface UseApprovalGateReturn {
   pendingApproval: PendingApproval | null;
   requestApproval: (toolName: string, args: any, pattern: string) => Promise<ApprovalResult>;
   resolveApproval: (result: ApprovalResult) => void;

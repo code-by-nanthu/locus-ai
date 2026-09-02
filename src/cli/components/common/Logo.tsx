@@ -3,7 +3,7 @@ import { Box, Text } from 'ink';
 import gradientString from 'gradient-string';
 import chalk from 'chalk';
 import { LOGO_LONG, LOGO_SHORT, logoWidth } from './ascii-art.js';
-import { useTerminalSize } from './use-terminal-size.js';
+import { useTerminalSize } from '../../hooks/useTerminalSize.js';
 
 const STOPS = ['#00d4ff', '#0077ff', '#7a3cff', '#ff3ce0'];
 const TRUECOLOR = chalk.level >= 2;

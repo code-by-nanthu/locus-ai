@@ -1,12 +1,12 @@
 #!/usr/bin/env node
 import React from 'react';
 import { render } from 'ink';
-import { App } from './components/App.js';
+import { App } from './cli/components/App.js';
 import { loadSession, listSessions, listSessionsDetail } from './core/session.js';
 import { loadConfig, LocusConfig } from './core/config.js';
-import { runCommitCommand } from './commands/commit.js';
-import { runExportCommand } from './commands/export.js';
-import { runUiCommand } from './commands/ui.js';
+import { runCommitCommand } from './cli/commands/commit.js';
+import { runExportCommand } from './cli/commands/export.js';
+import { runUiCommand } from './cli/commands/ui.js';
 import type { Provider } from './services/llm.js';
 
 // ── Session resolution helper ─────────────────────────────────────────────────

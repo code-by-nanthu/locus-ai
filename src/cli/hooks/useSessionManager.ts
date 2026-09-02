@@ -1,9 +1,9 @@
 import { useRef } from 'react';
-import { generateSessionId, saveSession } from '../core/session.js';
+import { generateSessionId, saveSession } from '../../core/session.js';
 
 type Message = any; // matches the Message type in App.tsx
 
-interface UseSessionManagerReturn {
+export interface UseSessionManagerReturn {
   sessionIdRef: React.MutableRefObject<string | null>;
   /** Call after every completed AI turn to auto-persist the conversation. */
   persistSession: (provider: string, model: string, latestHistory: Message[]) => void;
