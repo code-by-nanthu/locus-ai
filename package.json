@@ -13,8 +13,10 @@
   "license": "ISC",
   "packageManager": "pnpm@11.25.0",
   "dependencies": {
+    "chalk": "^6.0.0",
     "execa": "^10.0.1",
     "glob": "^13.0.6",
+    "gradient-string": "^3.0.0",
     "ink": "^7.1.1",
     "ink-select-input": "^6.2.0",
     "ink-spinner": "^5.0.0",
@@ -23,6 +25,7 @@
     "react": "^19.2.8"
   },
   "devDependencies": {
+    "@types/gradient-string": "^1.1.6",
     "@types/node": "^26.4.0",
     "@types/react": "^19.2.18",
     "typescript": "^7.0.2"

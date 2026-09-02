@@ -8,6 +8,7 @@ import { toolDefinitions, executeTool } from '../services/tools.js';
 import { SyntaxHighlighter } from './SyntaxHighlighter.js';
 import { loadConfig, saveConfig, LocusConfig } from '../core/config.js';
 import { generateSessionId, saveSession, listSessionsDetail, loadSession, deleteSession, SessionSummary } from '../core/session.js';
+import { Logo, BigLogo } from './Logo.js';
 
 interface Message {
   role: 'user' | 'assistant' | 'tool';
@@ -36,79 +37,6 @@ function now(): string {
 }
 
 // ─── Reusable Components ──────────────────────────────────────────────────────
-
-function Logo() {
-  return (
-    <Box>
-      <Text bold color="cyan">◆ </Text>
-      <Text bold color="white">Locus</Text>
-    </Box>
-  );
-}
-
-// ─── Big ASCII banner (shown on launch screen) ─────────────────────────────────
-
-// Each letter is stored as 5 rows of exactly 7 characters.
-// Rendered left-to-right with a cyan → blue → magenta gradient.
-const ASCII_LETTERS: Record<string, string[]> = {
-  L: [
-    '█      ',
-    '█      ',
-    '█      ',
-    '█      ',
-    '███████',
-  ],
-  O: [
-    ' █████ ',
-    '█     █',
-    '█     █',
-    '█     █',
-    ' █████ ',
-  ],
-  C: [
-    ' █████ ',
-    '█      ',
-    '█      ',
-    '█      ',
-    ' █████ ',
-  ],
-  U: [
-    '█     █',
-    '█     █',
-    '█     █',
-    '█     █',
-    ' █████ ',
-  ],
-  S: [
-    ' █████ ',
-    '█      ',
-    ' █████ ',
-    '      █',
-    ' █████ ',
-  ],
-};
-
-const WORD = ['L', 'O', 'C', 'U', 'S'];
-const LETTER_COLORS = ['cyan', 'blue', 'blueBright', 'magenta', 'magentaBright'] as const;
-
-function BigLogo() {
-  return (
-    <Box flexDirection="column" marginBottom={1}>
-      {[0, 1, 2, 3, 4].map(row => (
-        <Box key={row}>
-          {WORD.map((letter, i) => (
-            <React.Fragment key={i}>
-              <Text bold color={LETTER_COLORS[i]}>
-                {ASCII_LETTERS[letter][row]}
-              </Text>
-              {i < WORD.length - 1 && <Text> </Text>}
-            </React.Fragment>
-          ))}
-        </Box>
-      ))}
-    </Box>
-  );
-}
 
 function Divider() {
   // Use full terminal width, minus 4 for the horizontal padding of the container
