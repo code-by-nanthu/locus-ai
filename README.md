@@ -9,90 +9,92 @@
 ╚══════╝ ╚═════╝  ╚═════╝ ╚═════╝ ╚══════╝
 ```
 
-**A Standalone, Privacy-First Local AI Coding Orchestrator with UI & CLI**
+**Local AI coding assistant with a terminal UI and web dashboard**
 
 [![CI](https://github.com/code-by-nanthu/locus-ai/actions/workflows/ci.yml/badge.svg)](https://github.com/code-by-nanthu/locus-ai/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Zero-Dependency](https://img.shields.io/badge/Distribution-Native_Binary-emerald.svg)](docs/prd.md)
+[![Distribution](https://img.shields.io/badge/Distribution-Standalone_Binary-emerald.svg)](docs/prd.md)
 
 </div>
 
 ---
 
-**Locus** is a privacy-first local AI coding orchestrator and agent assistant. Running entirely on top of your local LLM engines (Ollama, LM Studio, vLLM, LocalAI, Jan, GPT4All, Llama.cpp, Oobabooga), Locus autonomously executes tool operations—surgical file edits, command execution, workspace exploration, and headless browser automation—while maintaining strict security containment and full user approval gates.
+Locus is a coding assistant that runs on your machine against your own local models. It connects to backends like Ollama, LM Studio, or llama.cpp, reads your codebase, runs commands, and makes edits without sending code or prompts to an external API.
+
+You get two ways to work with it: an interactive terminal app (built with Ink) and a local web interface that runs on `http://localhost:7331`.
 
 ---
 
-## 🚀 Key Features
+## What it does
 
-* **8 Local AI Inference Engines:** Direct plug-and-play support for `Ollama`, `LM Studio`, `LocalAI`, `vLLM`, `Jan`, `GPT4All`, `Llama.cpp`, and `Oobabooga`.
-* **Zero-Dependency Native Binary Distribution:** Compile into a self-contained native executable (`bin/locus`, 64 MB Mach-O arm64 or ELF x64) that runs out of the box with **zero Node.js or external runtime dependencies**.
-* **Centralized Autonomous Agent Loop:** Unified streaming agent engine powering both CLI and Web UI with parallel tool buffering, strict `tool_call_id` plumbing, and loop runaway guardrails.
-* **Surgical Diff & File Editing (`edit_file`):** Exact search-and-replace file editing preventing full-file truncation and hallucination on small models, with automatic backup snapshots and `/undo` support.
-* **Workspace Path Containment (`EXEC-2`):** Canonical `fs.realpath` resolution strictly verified against `root + path.sep` boundaries to eliminate directory traversal escapes and credential leakage (`.env`, `id_rsa`, `.git/config`).
-* **Intelligent Context Gating & Clean Prompting:** Automatically loads workspace guidance from `LOCUS.md`, `AGENTS.md`, or `CLAUDE.md`. Non-technical queries (e.g. creative writing, greetings) bypass git status dumping so small models stay focused.
-* **Context Compaction for Local Models:** Condenses older tool outputs and truncates turns gracefully to fit within 8K–32K local context windows.
-* **Security & Whitelisting Gateway:** Destructive tools (`write_file`, `edit_file`, `run_command`, `browser_action`) require user approval with single-use cryptographic tokens, auto-expiring TTL, and granular whitelist rules.
-* **Loopback Token Auth & DNS Rebinding Defense:** Web server binds strictly to `127.0.0.1`, validates `Host` headers with `421 Misdirected Request` enforcement, and requires persistent Bearer token authorization.
-* **Dual Interfaces:** Reactive terminal UI built with React Ink and a modular, responsive Web UI with live token budget indicators and session management.
-* **Automated Benchmark Eval Harness (`locus eval`):** Built-in scripted eval harness testing workspace search, surgical diffs, and command execution against fixture repositories with automated pass-rate validation.
-* **Multi-Format Export:** Export technical sessions to Markdown, JSON, or self-contained HTML reports via `locus export`.
+Most coding agents assume you are pointing them at a frontier cloud model with a massive context window. Small 3B to 14B parameter models running locally have very different failure modes: they drop context quickly, hallucinate when asked to rewrite 400-line files from scratch, and get stuck in tool call loops if schemas are too complicated.
+
+Locus is designed around those realities:
+
+* **Targeted file edits:** Instead of rewriting entire files, Locus uses search-and-replace patches. If a model makes a mistake, you can revert it with `/undo`.
+* **Keeps files inside the project:** File paths resolve against the workspace root. It rejects directory traversal attempts and blocks sensitive files like `.env` or SSH keys.
+* **Approval for risky tools:** Shell commands, file writes, and browser automation require confirmation before running. You can whitelist specific read-only commands so it stops asking for things like `git status`.
+* **Context budgeting:** It compacts conversation history and trims long tool outputs so smaller 8k to 32k context windows do not overflow mid task.
+* **Works with 8 local engines:** Out of the box support for Ollama, LM Studio, vLLM, LocalAI, Jan, GPT4All, llama.cpp, and text-generation-webui.
+* **Standalone binary:** You can compile Locus down to a single 64 MB executable that runs without Node.js or pnpm installed.
 
 ---
 
-## 📦 Installation & Getting Started
+## Installation
 
-### Option 1: Zero-Dependency 1-Line Installer (Recommended)
+### 1. Install the standalone binary
 
-Install the standalone native executable directly without requiring Node.js or pnpm:
+Download and run the installer for your system:
 
-**macOS & Linux (Terminal):**
+**macOS and Linux:**
+
 ```bash
 curl -fsSL https://raw.githubusercontent.com/code-by-nanthu/locus-ai/main/scripts/install.sh | bash
 ```
 
 **Windows (PowerShell):**
+
 ```powershell
 irm https://raw.githubusercontent.com/code-by-nanthu/locus-ai/main/scripts/install.ps1 | iex
 ```
 
-To uninstall:
-- On macOS/Linux: `./scripts/install.sh --uninstall`
-- On Windows: `.\scripts\install.ps1 -Uninstall`
+To remove Locus later:
 
-### Option 2: From Source via pnpm
+* macOS and Linux: run `./scripts/install.sh --uninstall`
+* Windows: run `.\scripts\install.ps1 -Uninstall`
 
-1. Clone the repository and install dependencies:
+### 2. Build from source
 
-   ```bash
-   git clone https://github.com/code-by-nanthu/locus-ai.git
-   cd locus-ai
-   pnpm install
-   ```
+If you want to edit the code or build it yourself:
 
-2. Build the project:
+```bash
+git clone https://github.com/code-by-nanthu/locus-ai.git
+cd locus-ai
+pnpm install
+pnpm build
+```
 
-   ```bash
-   pnpm build
-   ```
+Run tests to make sure everything passes:
 
-3. Run the automated test suite:
+```bash
+pnpm test
+```
 
-   ```bash
-   pnpm test
-   ```
+Start the interactive terminal:
 
-4. Launch Locus:
+```bash
+pnpm start
+```
 
-   ```bash
-   pnpm start
-   # or launch the Web UI dashboard:
-   pnpm start ui
-   ```
+Or start the web dashboard:
 
-### Option 3: Compile Your Own Standalone Native Binary
+```bash
+pnpm start ui
+```
 
-Compile the full application into a self-contained native binary using Bun:
+### 3. Compile your own binary
+
+To produce the single executable yourself:
 
 ```bash
 pnpm run build:binary
@@ -101,95 +103,90 @@ pnpm run build:binary
 
 ---
 
-## 🛠 Available CLI Subcommands
+## Command line usage
 
-| Command | Description |
+| Command | What it does |
 | :--- | :--- |
-| `locus` | Launch the interactive React Ink terminal assistant |
-| `locus ui [--port <port>]` | Launch browser Web UI on port 7331 (with automatic port conflict fallback) |
-| `locus eval` | Run the automated agent benchmark evaluation harness against fixture projects |
-| `locus diff` | View git diff statistics and modified file details for the project |
-| `locus commit` | Analyze staged git changes and generate Conventional Commit messages |
-| `locus sessions` | View a table of all saved sessions and timestamps |
-| `locus --session <id>` | Resume a specific past conversation in the terminal |
-| `locus export [id]` | Export session to a formatted Markdown document |
-| `locus export [id] --format html` | Export session to a self-contained, styled HTML report |
-| `locus export [id] --format json` | Export full raw session conversation to JSON |
-| `locus update` | Check GitHub for new releases and upgrade Locus in-place |
+| `locus` | Starts the terminal assistant |
+| `locus ui [--port <port>]` | Starts the web UI (default: port 7331, picks next free port if busy) |
+| `locus eval` | Runs the benchmark test suite against sample fixture projects |
+| `locus diff` | Shows git diff stats and modified files in the current repo |
+| `locus commit` | Generates a Conventional Commit message from staged changes |
+| `locus sessions` | Lists your saved conversations with timestamps |
+| `locus --session <id>` | Resumes a previous conversation by ID |
+| `locus export [id]` | Exports a chat to Markdown |
+| `locus export [id] --format html` | Exports a chat to a standalone styled HTML page |
+| `locus export [id] --format json` | Exports the raw chat log to JSON |
+| `locus update` | Checks GitHub for new releases and updates the binary |
 
 ---
 
-## ⚡ Interactive Slash Commands
+## Slash commands
 
-Inside either the CLI terminal or Web chat, enter `/` to invoke commands:
+Type `/` in either the terminal or the web chat to bring up built-in commands:
 
-* `/diff` — Inspect working tree changes and git diff summary
-* `/undo` — Revert the last file modification made by the agent
-* `/whitelist` — View or reset auto-approved tools and command patterns
-* `/sessions` — Browse and restore past conversation sessions
-* `/model` — Switch active model on the fly
-* `/provider` — Switch local AI runtime provider
+* `/diff`: Review current git changes before letting the agent continue.
+* `/undo`: Revert the last file modification made by the agent.
+* `/whitelist`: Manage auto-approved commands and tools.
+* `/sessions`: Pick and switch to an earlier conversation.
+* `/model`: Switch to another model without restarting.
+* `/provider`: Switch backends (e.g. from Ollama to LM Studio).
 
 ---
 
-## 🏗 Modular Project Architecture
+## Project structure
 
 ```text
 src/
-├── index.tsx                         # Main CLI entry point & argument router
-├── cli/                     
-│   ├── commands/                     # Standalone subcommands (commit, diff, export, ui)
-│   └── components/                   # React Ink terminal UI (chat, tools, setup)
-├── web/                              # Modularized Web UI Application
-│   ├── types.ts                      # Domain interfaces (Session, Message, ApprovalRequest)
-│   ├── lib/utils.ts                  # Pure helpers (formatters, session grouping, token estimator)
-│   ├── hooks/                        # Custom React hooks (useTheme, useShortcuts, useScrollAnchor)
-│   ├── components/
-│   │   ├── ui/                       # Reusable UI controls (IconButton, CopyButton)
-│   │   ├── layout/                   # Layout components (Header, Sidebar)
-│   │   ├── chat/                     # Conversation turns (MessageList, MessageBubble, ToolTurn, CodeBlock)
-│   │   └── modals/                   # Dialogs (ApprovalModal, ShortcutsModal, SettingsModal, ErrorBanner)
-│   └── App.tsx                       # Clean root coordinator (~390 lines)
-├── core/                    
-│   ├── config.ts                     # Cross-platform config (~/.config/locus/config.json)
-│   ├── constants.ts                  # Guarded tools whitelist & pattern resolvers
-│   └── session.ts                    # Chat persistence & single-writer locks
-├── services/                
-│   ├── llm.ts                        # Local AI provider endpoints & model discovery
-│   ├── agent.ts                      # Central agent loop, compaction, guardrails, git context
-│   └── tools.ts                      # Tool schemas, execution, safe path resolution
-└── test/                             # Node test runner suite & programmatic eval harness
+├── index.tsx                         # CLI entry point and argument router
+├── cli/
+│   ├── commands/                     # Subcommands (commit, diff, export, ui, update)
+│   └── components/                   # Terminal interface (React Ink)
+├── web/                              # Browser interface (React, Tailwind, Vite)
+│   ├── components/layout/            # Header, sidebar, session grouping
+│   ├── components/chat/              # Message list, tool cards, diff viewer
+│   ├── components/modals/            # Settings, shortcuts, approvals
+│   └── App.tsx                       # Web app state and SSE streaming
+├── core/
+│   ├── config.ts                     # Configuration (~/.config/locus/config.json)
+│   ├── constants.ts                  # Default ports and security whitelist patterns
+│   └── session.ts                    # Session storage and single-writer file locking
+├── services/
+│   ├── llm.ts                        # Provider endpoints and model detection
+│   ├── agent.ts                      # Agent loop, tool execution, and prompt compaction
+│   └── tools.ts                      # Safe file reading, surgical edits, commands
+└── test/                             # Tests and scripted evaluation tasks
 ```
 
 ---
 
-## 🧪 Testing & Verification
+## Testing
 
-Run the comprehensive test suite with Node's native test runner:
+Locus includes unit tests and an automated task benchmark:
 
 ```bash
 pnpm test
 ```
 
-Verifies:
-* **Agent Intelligence & Compaction:** Pseudo-tool-call parsing, context compaction, intent gating, and auth pattern mapping.
-* **Security & Path Containment:** Secret file blocking, directory traversal rejection (`EXEC-2`), surgical edits (`AG-8`), and safe command execution.
-* **Eval Benchmark Harness (`EVAL-1`):** Programmatic task execution against fixture projects with automated pass-rate validation.
+This runs:
+
+* **Tool sandboxing:** checks path traversal blocking, secret filtering, and file editing.
+* **Agent parsing:** tests pseudo-tool recovery, prompt compaction, and intent filtering.
+* **Evaluation harness:** runs scripted coding tasks on test fixtures to measure pass rates.
 
 ---
 
-## 📚 Documentation
+## Documentation
 
-* [Product Requirements Document (PRD)](docs/prd.md)
-* [Engineering Action Plan](docs/locus-action-plan.md)
-* [Gap Register (100% Resolved)](docs/locus-gap-register.md)
-* [Threat Model & Security Policy](docs/threat-model.md)
-* [Tool & Provider Reference](docs/tool-reference.md)
-* [Hardware & Model Recommendations](docs/model-recommendations.md)
+* [Product requirements (PRD)](docs/prd.md)
+* [Engineering plan](docs/locus-action-plan.md)
+* [Threat model and security](docs/threat-model.md)
+* [Tool reference](docs/tool-reference.md)
+* [Hardware and model guide](docs/model-recommendations.md)
 * [Changelog](CHANGELOG.md)
 
 ---
 
-## 📄 License
+## License
 
-MIT © [code-by-nanthu](https://github.com/code-by-nanthu)
+MIT (c) [code-by-nanthu](https://github.com/code-by-nanthu)
