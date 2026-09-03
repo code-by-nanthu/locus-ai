@@ -5,6 +5,9 @@ on:
     tags:
       - 'v*'
 
+permissions:
+  contents: write
+
 jobs:
   build-binaries:
     name: Build Native Standalone Binary (${{ matrix.target }})
@@ -53,6 +56,8 @@ jobs:
     name: Publish Release Assets
     needs: build-binaries
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
       - name: Download all binary artifacts
