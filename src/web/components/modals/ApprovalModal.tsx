@@ -44,7 +44,9 @@ export function ApprovalModal({
                 <pre className="whitespace-pre-wrap break-all">
                   {request.toolName === 'run_command'
                     ? `$ ${request.args?.command}`
-                    : request.args?.filePath || request.pattern}
+                    : request.toolName === 'browser_action'
+                      ? `${(request.args?.action || 'ACTION').toUpperCase()}: ${request.args?.url || request.args?.selector || request.pattern}`
+                      : request.args?.filePath || request.pattern}
                 </pre>
               </div>
             </div>

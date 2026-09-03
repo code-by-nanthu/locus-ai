@@ -275,8 +275,8 @@ export async function runUiCommand(options?: { port?: number }) {
 
   // ── Approval endpoint ──────────────────────────────────────────────────────
 
-  app.post('/api/approve', (req, res) => {
-    const { authId, approved, always } = req.body;
+  const handleApproval = (req: express.Request, res: express.Response) => {
+    const authId = (req.params.id || req.body.authId) as string;
     if (!authId || typeof authId !== 'string') {
       return res.status(400).json({ error: 'Missing or invalid authId' });
     }
@@ -286,9 +286,16 @@ export async function runUiCommand(options?: { port?: number }) {
     }
     clearTimeout(entry.timer);
     pendingApprovals.delete(authId);
-    entry.resolve({ approved: Boolean(approved), always: Boolean(always) });
+
+    const approved = req.body.allow !== undefined ? Boolean(req.body.allow) : Boolean(req.body.approved);
+    const always = Boolean(req.body.always);
+
+    entry.resolve({ approved, always });
     res.json({ success: true });
-  });
+  };
+
+  app.post('/api/auth/:id', handleApproval);
+  app.post('/api/approve', handleApproval);
 
   const activeAborts = new Map<string, AbortController>();
 
