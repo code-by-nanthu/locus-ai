@@ -3,7 +3,7 @@ import assert from 'node:assert';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import { executeTool, resolveSafeWorkspacePath, isSecretPath, undoLastEdit } from '../services/tools.js';
-import { truncateSession, withSessionLock, saveSession, loadSession, deleteSession } from '../core/session.js';
+import { truncateSession, withSessionLock, saveSession, loadSession, deleteSession, renameSession, listSessionsDetail } from '../core/session.js';
 
 describe('Security & Tool Execution Suite', () => {
   const testFile = path.resolve(process.cwd(), 'test-scratch.txt');
@@ -145,5 +145,20 @@ describe('Security & Tool Execution Suite', () => {
     });
     assert.strictEqual(executed, true);
     assert.strictEqual(res, 42);
+  });
+
+  it('renames session and updates index with persistent title', async () => {
+    const testSessionId = 'test-rename-' + Date.now();
+    await saveSession(testSessionId, 'ollama', 'test-model', [{ role: 'user', content: 'test message' }]);
+    await renameSession(testSessionId, 'Custom Renamed Title');
+
+    const loaded = await loadSession(testSessionId);
+    assert.strictEqual(loaded?.title, 'Custom Renamed Title');
+
+    const details = await listSessionsDetail();
+    const item = details.find((s) => s.id === testSessionId);
+    assert.strictEqual(item?.title, 'Custom Renamed Title');
+
+    await deleteSession(testSessionId);
   });
 });

@@ -17,11 +17,13 @@ export function Header({
   startNewSession,
   isDark,
   setIsDark,
+  currentSessionTitle,
 }: {
   sidebarOpen: boolean;
   setSidebarOpen: (val: boolean) => void;
   loadSessions: () => void;
   currentSessionId: string | null;
+  currentSessionTitle?: string;
   isGenerating: boolean;
   historyLength: number;
   estimatedTokens: number;
@@ -56,7 +58,7 @@ export function Header({
             &gt;_
           </span>
           <h1 className="text-[15px] font-semibold tracking-tight truncate">
-            {formatSessionTitle(currentSessionId || undefined)}
+            {formatSessionTitle(currentSessionId || undefined, currentSessionTitle)}
           </h1>
         </div>
       </div>

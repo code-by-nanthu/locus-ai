@@ -159,14 +159,18 @@ export default function App() {
   };
 
   const renameSession = async (id: string, newTitle: string) => {
-    if (!newTitle.trim()) return;
+    const trimmed = newTitle.trim();
+    if (!trimmed) return;
+    setSessions((prev) =>
+      prev.map((s) => (s.id === id ? { ...s, title: trimmed } : s))
+    );
     try {
       await fetch(`/api/session/${id}/rename`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ title: newTitle.trim() }),
+        body: JSON.stringify({ title: trimmed }),
       });
-      loadSessions();
+      await loadSessions();
     } catch (e) {
       console.error(e);
     }
@@ -425,6 +429,7 @@ export default function App() {
           setSidebarOpen={setSidebarOpen}
           loadSessions={loadSessions}
           currentSessionId={currentSessionId}
+          currentSessionTitle={sessions.find((s) => s.id === currentSessionId)?.title}
           isGenerating={isGenerating}
           historyLength={history.length}
           estimatedTokens={estimatedTokens}

@@ -57,20 +57,26 @@ export async function saveSession(
   const dir = getHistoryDir();
   await fs.mkdir(dir, { recursive: true });
 
+  const existing = await loadSession(id);
+  const createdAt = existing?.createdAt || new Date().toISOString();
+  const title = existing?.title;
+
   const session: SessionFile = {
     schemaVersion: 1,
     id,
+    title,
     provider,
     model,
-    createdAt: new Date().toISOString(),
+    createdAt,
     messages,
   };
   await fs.writeFile(getSessionPath(id), JSON.stringify(session, null, 2), 'utf-8');
   await updateSessionIndex({
     id,
+    title,
     provider,
     model,
-    createdAt: session.createdAt,
+    createdAt,
     turns: messages.filter((m) => m.role === 'user').length,
   });
 }
@@ -86,8 +92,12 @@ async function updateSessionIndex(summary: SessionSummary): Promise<void> {
     try {
       index = JSON.parse(await fs.readFile(indexPath, 'utf-8'));
     } catch {}
-    index = index.filter((item) => item.id !== summary.id);
-    index.unshift(summary);
+    const existingIdx = index.findIndex((item) => item.id === summary.id);
+    if (existingIdx !== -1) {
+      index[existingIdx] = { ...index[existingIdx], ...summary };
+    } else {
+      index.unshift(summary);
+    }
     await fs.writeFile(indexPath, JSON.stringify(index, null, 2), 'utf-8');
   } catch {}
 }
@@ -131,6 +141,14 @@ export async function renameSession(id: string, title: string): Promise<void> {
   if (session) {
     session.title = title;
     await fs.writeFile(getSessionPath(id), JSON.stringify(session, null, 2), 'utf-8');
+    await updateSessionIndex({
+      id,
+      title,
+      provider: session.provider,
+      model: session.model,
+      createdAt: session.createdAt,
+      turns: session.messages.filter((m) => m.role === 'user').length,
+    });
   }
 }
 

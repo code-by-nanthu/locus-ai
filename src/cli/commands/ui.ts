@@ -142,15 +142,24 @@ export async function runUiCommand(options?: { port?: number }) {
     }
   });
 
-  app.put('/api/session/:id', async (req, res) => {
+  const handleRename = async (req: express.Request, res: express.Response) => {
     try {
       const { title } = req.body;
-      await renameSession(req.params.id, title);
+      if (!title || typeof title !== 'string') {
+        return res.status(400).json({ error: 'Title is required' });
+      }
+      const id = String(req.params.id);
+      await renameSession(id, title.trim());
       res.json({ success: true });
     } catch {
       res.status(500).json({ error: 'Failed to rename session' });
     }
-  });
+  };
+
+  app.post('/api/session/:id/rename', handleRename);
+  app.put('/api/session/:id/rename', handleRename);
+  app.put('/api/session/:id', handleRename);
+  app.patch('/api/session/:id', handleRename);
 
   // ── Suggestions endpoint ───────────────────────────────────────────────────
 
