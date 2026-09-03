@@ -106,7 +106,18 @@ if [ -z "$SRC_BIN" ]; then
 
   COMPILED_BIN="$TMP_DIR/locus-compiled"
   echo "Compiling self-contained native executable..."
-  (cd "$BUILD_DIR" && bun build --compile src/index.tsx --outfile "$COMPILED_BIN" --external playwright --external chromium-bidi)
+  (
+    cd "$BUILD_DIR"
+    if [ ! -d "node_modules" ]; then
+      echo "Resolving dependencies with Bun..."
+      bun install
+    fi
+    if [ ! -d "dist/web" ]; then
+      echo "Building web assets..."
+      bun run build:web 2>/dev/null || true
+    fi
+    bun build --compile src/index.tsx --outfile "$COMPILED_BIN" --external playwright --external chromium-bidi
+  )
   chmod +x "$COMPILED_BIN"
   SRC_BIN="$COMPILED_BIN"
 fi
