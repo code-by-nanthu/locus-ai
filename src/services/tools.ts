@@ -2,12 +2,10 @@ import * as fs from 'fs/promises';
 import * as path from 'path';
 import { execa } from 'execa';
 import { glob } from 'glob';
-import { chromium, Browser, BrowserContext, Page } from 'playwright';
-
 // Global state for stateful browser sessions
-let globalBrowser: Browser | null = null;
-let globalContext: BrowserContext | null = null;
-let globalPage: Page | null = null;
+let globalBrowser: any = null;
+let globalContext: any = null;
+let globalPage: any = null;
 
 export const toolDefinitions = [
   {
@@ -486,10 +484,22 @@ export async function executeTool(name: string, args: any): Promise<string> {
 
       // Auto-initialize browser on first non-close action
       if (!globalBrowser && action !== 'close') {
+        let chromiumModule: any;
+        try {
+          const pw = await import('playwright');
+          chromiumModule = pw.chromium;
+        } catch {
+          return wrapResult({
+            ok: false,
+            errorCode: 'PLAYWRIGHT_NOT_FOUND',
+            error: 'Playwright is required for browser automation. Run "npm install -g playwright" to enable.',
+          });
+        }
+
         const recordingsDir = path.resolve(process.cwd(), 'recordings');
         await fs.mkdir(recordingsDir, { recursive: true });
-        
-        globalBrowser = await chromium.launch({ headless: false }); // Show browser to user
+
+        globalBrowser = await chromiumModule.launch({ headless: false }); // Show browser to user
         globalContext = await globalBrowser.newContext({
           recordVideo: { dir: recordingsDir }
         });
