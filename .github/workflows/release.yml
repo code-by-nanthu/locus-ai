@@ -36,7 +36,7 @@ jobs:
       - name: Compile Native Standalone Binary
         run: |
           mkdir -p dist/bin
-          bun build --compile src/index.tsx --outfile dist/bin/${{ matrix.outfile }} --external playwright --external chromium-bidi
+          bun build --compile src/index.tsx --outfile dist/bin/${{ matrix.outfile }} --external chromium-bidi
           chmod +x dist/bin/${{ matrix.outfile }}
           if command -v sha256sum >/dev/null 2>&1; then
             sha256sum dist/bin/${{ matrix.outfile }} > dist/bin/${{ matrix.outfile }}.sha256

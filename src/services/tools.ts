@@ -2,6 +2,73 @@ import * as fs from 'fs/promises';
 import * as path from 'path';
 import { execa } from 'execa';
 import { glob } from 'glob';
+import open from 'open';
+
+export async function openInSystemBrowser(targetUrl: string): Promise<boolean> {
+  try {
+    await open(targetUrl);
+    return true;
+  } catch {
+    try {
+      if (process.platform === 'darwin') {
+        await execa('open', [targetUrl]);
+        return true;
+      } else if (process.platform === 'win32') {
+        await execa('cmd', ['/c', 'start', '', targetUrl]);
+        return true;
+      } else {
+        await execa('xdg-open', [targetUrl]);
+        return true;
+      }
+    } catch {
+      return false;
+    }
+  }
+}
+
+async function launchChromiumBrowser(chromiumModule: any): Promise<any> {
+  const channels = ['chrome', 'msedge', 'chromium'];
+  for (const channel of channels) {
+    try {
+      return await chromiumModule.launch({ channel, headless: false });
+    } catch {}
+    try {
+      return await chromiumModule.launch({ channel, headless: true });
+    } catch {}
+  }
+
+  const knownPaths = [
+    '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+    '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge',
+    '/Applications/Brave Browser.app/Contents/MacOS/Brave Browser',
+    '/Applications/Chromium.app/Contents/MacOS/Chromium',
+    '/usr/bin/google-chrome',
+    '/usr/bin/google-chrome-stable',
+    '/usr/bin/chromium',
+    '/usr/bin/chromium-browser',
+    '/usr/bin/microsoft-edge',
+    '/snap/bin/chromium',
+    'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+    'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
+    'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
+    'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe',
+  ];
+
+  for (const exePath of knownPaths) {
+    try {
+      return await chromiumModule.launch({ executablePath: exePath, headless: false });
+    } catch {}
+    try {
+      return await chromiumModule.launch({ executablePath: exePath, headless: true });
+    } catch {}
+  }
+
+  try {
+    return await chromiumModule.launch({ headless: false });
+  } catch {}
+  return await chromiumModule.launch({ headless: true });
+}
+
 // Global state for stateful browser sessions
 let globalBrowser: any = null;
 let globalContext: any = null;
@@ -102,7 +169,7 @@ export const toolDefinitions = [
     type: 'function' as const,
     function: {
       name: 'browser_action',
-      description: 'Perform a stateful browser action. Automatically launches a Chromium browser with video recording on first use.',
+      description: 'Open a web page or perform browser automation. For action "navigate", opens the URL in the system browser directly.',
       parameters: {
         type: 'object',
         properties: {
@@ -482,72 +549,134 @@ export async function executeTool(name: string, args: any): Promise<string> {
     if (name === 'browser_action') {
       const { action, url, selector, text, script } = args;
 
-      // Auto-initialize browser on first non-close action
-      if (!globalBrowser && action !== 'close') {
-        let chromiumModule: any;
+      if (action === 'close') {
+        if (globalContext) {
+          try { await globalContext.close(); } catch {}
+        }
+        if (globalBrowser) {
+          try { await globalBrowser.close(); } catch {}
+        }
+        globalBrowser = null;
+        globalContext = null;
+        globalPage = null;
+        return wrapResult({ ok: true, message: 'Browser session closed.' });
+      }
+
+      // Try loading Playwright dynamically if not already active
+      let chromiumModule: any = null;
+      if (!globalBrowser) {
         try {
+          // @ts-ignore
           const pw = await import('playwright');
-          chromiumModule = pw.chromium;
-        } catch {
+          chromiumModule = pw.chromium || pw.default?.chromium;
+        } catch {}
+
+        if (!chromiumModule) {
+          try {
+            // @ts-ignore
+            const pw = await import('playwright-core');
+            chromiumModule = pw.chromium || pw.default?.chromium;
+          } catch {}
+        }
+      }
+
+      // Fall back directly to default system browser for navigate action
+      if (!globalBrowser && !chromiumModule) {
+        if (action === 'navigate' || (!action && url)) {
+          if (!url) {
+            return wrapResult({ ok: false, errorCode: 'INVALID_ARGS', error: 'url is required for navigate action' });
+          }
+          const opened = await openInSystemBrowser(url);
+          if (opened) {
+            return wrapResult({
+              ok: true,
+              message: `Opened ${url} in your system browser.`,
+            });
+          }
           return wrapResult({
             ok: false,
-            errorCode: 'PLAYWRIGHT_NOT_FOUND',
-            error: 'Playwright is required for browser automation. Run "npm install -g playwright" to enable.',
+            errorCode: 'OPEN_FAILED',
+            error: `Failed to open ${url} in system browser.`,
           });
         }
 
+        return wrapResult({
+          ok: false,
+          errorCode: 'PLAYWRIGHT_NOT_FOUND',
+          error: `Automated DOM interaction ('${action}') requires Playwright. For opening or viewing pages, use action 'navigate' with a URL to open it in your system browser.`,
+        });
+      }
+
+      // Playwright is available: initialize instance
+      if (!globalBrowser) {
         const recordingsDir = path.resolve(process.cwd(), 'recordings');
         await fs.mkdir(recordingsDir, { recursive: true });
 
-        globalBrowser = await chromiumModule.launch({ headless: false }); // Show browser to user
-        globalContext = await globalBrowser.newContext({
-          recordVideo: { dir: recordingsDir }
-        });
+        globalBrowser = await launchChromiumBrowser(chromiumModule);
+        let context: any;
+        try {
+          context = await globalBrowser.newContext({
+            recordVideo: { dir: recordingsDir },
+          });
+        } catch {
+          context = await globalBrowser.newContext();
+        }
+        globalContext = context;
         globalPage = await globalContext.newPage();
       }
 
-      if (!globalPage && action !== 'close') {
-        return wrapResult({ ok: false, errorCode: 'BROWSER_INIT_FAILED', error: 'Browser failed to initialize.' });
+      if (!globalPage) {
+        if (action === 'navigate' && url) {
+          const opened = await openInSystemBrowser(url);
+          if (opened) {
+            return wrapResult({ ok: true, message: `Opened ${url} in your system browser.` });
+          }
+        }
+        return wrapResult({ ok: false, errorCode: 'BROWSER_INIT_FAILED', error: 'Browser failed to initialize. Ensure Google Chrome, Microsoft Edge, or Chromium is installed.' });
       }
 
       switch (action) {
         case 'navigate':
           if (!url) return wrapResult({ ok: false, errorCode: 'INVALID_ARGS', error: 'url is required for navigate' });
-          await globalPage!.goto(url, { waitUntil: 'domcontentloaded' });
-          return wrapResult({ ok: true, message: `Navigated to ${await globalPage!.title()}` });
-        
+          await globalPage.goto(url, { waitUntil: 'domcontentloaded' });
+          return wrapResult({ ok: true, message: `Navigated to ${await globalPage.title()}` });
+
         case 'click':
           if (!selector) return wrapResult({ ok: false, errorCode: 'INVALID_ARGS', error: 'selector is required for click' });
-          await globalPage!.click(selector);
+          await globalPage.click(selector);
           return wrapResult({ ok: true, message: `Clicked element matching '${selector}'` });
-        
+
         case 'fill':
           if (!selector || text === undefined) return wrapResult({ ok: false, errorCode: 'INVALID_ARGS', error: 'selector and text are required for fill' });
-          await globalPage!.fill(selector, text);
+          await globalPage.fill(selector, text);
           return wrapResult({ ok: true, message: `Filled element matching '${selector}' with text` });
-        
+
         case 'evaluate':
           if (!script) return wrapResult({ ok: false, errorCode: 'INVALID_ARGS', error: 'script is required for evaluate' });
-          const result = await globalPage!.evaluate(script);
+          const result = await globalPage.evaluate(script);
           return wrapResult({ ok: true, result });
-        
+
+        case 'content':
+        case 'extract':
+          const pageText = await globalPage.evaluate(() => {
+            const body = document.body;
+            return body ? body.innerText : document.documentElement.outerHTML;
+          });
+          const pageTitle = await globalPage.title();
+          const pageUrl = globalPage.url();
+          return wrapResult({
+            ok: true,
+            title: pageTitle,
+            url: pageUrl,
+            content: (pageText || '').slice(0, 12000),
+            message: `Extracted content from ${pageTitle} (${pageUrl})`,
+          });
+
         case 'screenshot':
           const screenshotPath = path.resolve(process.cwd(), `screenshot-${Date.now()}.png`);
-          await globalPage!.screenshot({ path: screenshotPath });
+          await globalPage.screenshot({ path: screenshotPath });
           return wrapResult({ ok: true, message: `Screenshot saved to ${screenshotPath}` });
-        
-        case 'close':
-          if (globalContext) {
-            await globalContext.close(); // Ensures video is fully flushed and saved
-          }
-          if (globalBrowser) {
-            await globalBrowser.close();
-          }
-          globalBrowser = null;
-          globalContext = null;
-          globalPage = null;
-          return wrapResult({ ok: true, message: 'Browser session closed successfully. Video saved in ./recordings' });
-        
+
         default:
           return wrapResult({ ok: false, errorCode: 'UNKNOWN_ACTION', error: `Unknown browser action: ${action}` });
       }

@@ -161,4 +161,10 @@ describe('Security & Tool Execution Suite', () => {
 
     await deleteSession(testSessionId);
   });
+
+  it('handles browser_action navigate and close without throwing Playwright errors', async () => {
+    const res = await executeTool('browser_action', { action: 'close' });
+    const parsed = JSON.parse(res);
+    assert.strictEqual(parsed.ok, true);
+  });
 });

@@ -7,7 +7,7 @@
   "scripts": {
     "build:web": "vite build -c vite.web.config.ts && node scripts/embed-web.js",
     "build": "pnpm build:web && tsc",
-    "build:binary": "export PATH=\"$HOME/.bun/bin:$PATH\" && bun build --compile src/index.tsx --outfile bin/locus --external playwright --external chromium-bidi",
+    "build:binary": "export PATH=\"$HOME/.bun/bin:$PATH\" && bun build --compile src/index.tsx --outfile bin/locus --external chromium-bidi",
     "lint": "tsc --noEmit",
     "test": "pnpm build && node --test --test-concurrency=1 dist/test/*.test.js",
     "start": "pnpm build && node ./dist/index.js"
