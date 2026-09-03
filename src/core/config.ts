@@ -1,4 +1,5 @@
 import * as fs from 'fs/promises';
+import * as fsSync from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 
@@ -20,6 +21,10 @@ export function getConfigDir(): string {
   const legacyDir = path.join(os.homedir(), '.config', 'locus');
   if (process.platform === 'win32') {
     return process.env.APPDATA ? path.join(process.env.APPDATA, 'locus') : legacyDir;
+  }
+  if (process.platform === 'darwin') {
+    if (fsSync.existsSync(legacyDir)) return legacyDir;
+    return path.join(os.homedir(), 'Library', 'Application Support', 'locus');
   }
   if (process.env.XDG_CONFIG_HOME) {
     return path.join(process.env.XDG_CONFIG_HOME, 'locus');

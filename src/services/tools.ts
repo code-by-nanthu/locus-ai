@@ -157,9 +157,11 @@ export async function resolveSafeWorkspacePath(rawPath: string, allowMissing = f
     realCwd = path.resolve(cwd);
   }
 
+  const rootWithSep = realCwd.endsWith(path.sep) ? realCwd : realCwd + path.sep;
+
   const normalized = path.isAbsolute(rawPath) ? path.normalize(rawPath) : path.resolve(cwd, rawPath);
 
-  if (!normalized.startsWith(realCwd) && normalized !== realCwd) {
+  if (!normalized.startsWith(rootWithSep) && normalized !== realCwd) {
     throw new Error(`Path traversal denied: file "${rawPath}" escapes workspace directory.`);
   }
 
@@ -172,7 +174,7 @@ export async function resolveSafeWorkspacePath(rawPath: string, allowMissing = f
     while (checkDir && checkDir !== path.dirname(checkDir)) {
       try {
         const realParent = await fs.realpath(checkDir);
-        if (!realParent.startsWith(realCwd) && realParent !== realCwd) {
+        if (!realParent.startsWith(rootWithSep) && realParent !== realCwd) {
           throw new Error(`Path traversal denied: target directory "${rawPath}" escapes workspace.`);
         }
         break;
@@ -188,7 +190,7 @@ export async function resolveSafeWorkspacePath(rawPath: string, allowMissing = f
   }
 
   const realTarget = await fs.realpath(normalized);
-  if (!realTarget.startsWith(realCwd) && realTarget !== realCwd) {
+  if (!realTarget.startsWith(rootWithSep) && realTarget !== realCwd) {
     throw new Error(`Path traversal denied: file "${rawPath}" escapes workspace directory.`);
   }
   return realTarget;

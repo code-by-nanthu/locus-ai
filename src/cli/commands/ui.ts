@@ -24,13 +24,14 @@ export async function runUiCommand() {
   const app = express();
   app.use(express.json());
 
-  // S-2: DNS rebinding protection via Host header validation
+  const PORT = Number(process.env.PORT || 3000);
+  const ALLOWED_HOSTS = new Set([`127.0.0.1:${PORT}`, `localhost:${PORT}`, `[::1]:${PORT}`, `127.0.0.1`, `localhost`, `[::1]`]);
+
+  // SEC-2: DNS rebinding protection via Host header validation (421 Misdirected Request)
   app.use((req, res, next) => {
     const host = req.headers.host || '';
-    const hostname = host.split(':')[0].toLowerCase();
-    const allowed = new Set(['localhost', '127.0.0.1', '[::1]']);
-    if (!allowed.has(hostname)) {
-      return res.status(403).send('Forbidden: Invalid Host header (DNS rebinding protection)');
+    if (!ALLOWED_HOSTS.has(host)) {
+      return res.status(421).send('Misdirected Request: Invalid Host header (DNS rebinding protection)');
     }
     next();
   });
@@ -351,10 +352,8 @@ export async function runUiCommand() {
     }
   });
 
-  // ── Server ─────────────────────────────────────────────────────────────────
-
-  const PORT = process.env.PORT || 3000;
-  app.listen(PORT, async () => {
+  // SEC-1: Bind strictly to 127.0.0.1 (never 0.0.0.0 or LAN interfaces)
+  app.listen(PORT, '127.0.0.1', async () => {
     const launchUrl = `http://localhost:${PORT}?token=${bearerToken}`;
     console.log(`\n\x1b[36mLocus UI is running at ${launchUrl}\x1b[0m\n`);
     await open(launchUrl);

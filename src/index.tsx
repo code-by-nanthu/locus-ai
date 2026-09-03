@@ -167,6 +167,7 @@ Usage:
 Subcommands:
   (none)                  Launch the interactive terminal assistant (React Ink UI)
   ui                      Launch the browser-based Web UI with loopback security
+  eval                    Run agent evaluation benchmark harness against fixture repos
   diff                    Inspect git working tree modifications and diff statistics
   commit                  Generate Conventional Commit message from staged changes
   export [id] [options]   Export session history to Markdown, JSON, or HTML
@@ -237,6 +238,14 @@ Options:
   if (args[0] === 'export') {
     await runExportCommand(args.slice(1));
     return;
+  }
+
+  // ── locus eval (EVAL-1) ────────────────────────────────────────────────────
+  if (args[0] === 'eval') {
+    const { execa } = await import('execa');
+    console.log('\n\x1b[36mRunning Locus Agent Evaluation Harness (EVAL-1)...\x1b[0m\n');
+    const res = await execa({ stdio: 'inherit', reject: false })`node --test dist/test/eval_harness.test.js`;
+    process.exit(res.exitCode ?? 0);
   }
 
   // ── locus ui ───────────────────────────────────────────────────────────────
