@@ -13,7 +13,7 @@ export const ToolEntry = React.memo(function ToolEntry({ name, content, rejected
 
   try {
     const parsed = JSON.parse(content || '{}');
-    if (parsed.success === false || parsed.error) {
+    if (parsed.ok === false || parsed.success === false || parsed.error) {
       success = false;
       detail = parsed.error ?? 'unknown error';
     } else if (parsed.message) {
@@ -36,8 +36,10 @@ export const ToolEntry = React.memo(function ToolEntry({ name, content, rejected
   const meta: Record<string, { icon: string; label: string }> = {
     read_file: { icon: '↗', label: 'read' },
     write_file: { icon: '↙', label: 'write' },
+    edit_file: { icon: '✎', label: 'edit' },
     run_command: { icon: '⚡', label: 'exec' },
     search_workspace: { icon: '⊙', label: 'scan' },
+    browser_action: { icon: '🌐', label: 'browse' },
   };
   const { icon, label } = meta[name || ''] ?? { icon: '◦', label: name ?? 'tool' };
 

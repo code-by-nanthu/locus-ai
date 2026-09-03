@@ -3,12 +3,13 @@ import { Box, Text, useInput, useApp } from 'ink';
 import TextInput from 'ink-text-input';
 import SelectInput from 'ink-select-input';
 import Spinner from 'ink-spinner';
+import { execa } from 'execa';
+import { undoLastEdit } from '../../services/tools.js';
 import { getLocalClient, fetchLocalModels, Provider, DEFAULT_URLS } from '../../services/llm.js';
-import { toolDefinitions, executeTool, normalizeToolName } from '../../services/tools.js';
-import { fetchPromptSuggestions } from '../../services/agent.js';
+import { fetchPromptSuggestions, runAgentLoop } from '../../services/agent.js';
 import { saveConfig, LocusConfig } from '../../core/config.js';
-import { listSessionsDetail, loadSession, deleteSession, SessionSummary } from '../../core/session.js';
-import { GUARDED_TOOLS, FALLBACK_SUGGESTIONS } from '../../core/constants.js';
+import { listSessionsDetail, loadSession, deleteSession, generateSessionId, SessionSummary } from '../../core/session.js';
+import { GUARDED_TOOLS, FALLBACK_SUGGESTIONS, getAuthPattern } from '../../core/constants.js';
 import { useApprovalGate } from '../hooks/useApprovalGate.js';
 import { useSessionManager } from '../hooks/useSessionManager.js';
 import { Logo } from './common/Logo.js';
@@ -23,7 +24,7 @@ import { ProviderItem } from './setup/ProviderItem.js';
 import { ModelItem } from './setup/ModelItem.js';
 
 export interface Message {
-  role: 'user' | 'assistant' | 'tool';
+  role: 'user' | 'assistant' | 'tool' | 'system';
   name?: string;
   tool_call_id?: string;
   content: string | null;
@@ -37,6 +38,8 @@ export type Step = 'SELECT_PROVIDER' | 'SELECT_URL' | 'SELECT_MODEL' | 'SELECT_S
 // ─── Available slash commands ────────────────────────────────────────────────────────────
 
 export const SLASH_COMMANDS = [
+  { cmd: '/diff', description: 'Show git diff of modified workspace files' },
+  { cmd: '/undo', description: 'Revert the last file change made by the agent' },
   { cmd: '/provider', description: 'Switch the AI provider' },
   { cmd: '/model', description: 'Switch the active model' },
   { cmd: '/sessions', description: 'Browse and restore a previous chat session' },
@@ -47,46 +50,6 @@ export const SLASH_COMMANDS = [
 
 function now(): string {
   return new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
-}
-
-// ─── Pseudo-tool-call detection ──────────────────────────────────────────────
-function parsePseudoToolCalls(text: string): Array<{ name: string; args: Record<string, any> }> {
-  const results: Array<{ name: string; args: Record<string, any> }> = [];
-  const knownTools = new Set(['read_file', 'write_file', 'run_command', 'search_workspace', 'browser_action']);
-
-  const lines = text.split('\n');
-  for (const line of lines) {
-    const trimmed = line.trim();
-    if (!trimmed.startsWith('{') || !trimmed.endsWith('}')) continue;
-    try {
-      const obj = JSON.parse(trimmed);
-      if (obj.name) {
-        const raw = obj.parameters ?? obj.arguments ?? obj.input ?? obj.args ?? {};
-        const args = typeof raw === 'string' ? JSON.parse(raw) : raw;
-        const matched = [...knownTools].find((t) => obj.name === t || obj.name.includes(t));
-        if (matched) results.push({ name: matched, args });
-      }
-    } catch {}
-  }
-
-  if (results.length === 0) {
-    try {
-      const startIdx = text.indexOf('{');
-      const endIdx = text.lastIndexOf('}');
-      if (startIdx !== -1 && endIdx !== -1) {
-        const jsonStr = text.substring(startIdx, endIdx + 1);
-        const obj = JSON.parse(jsonStr);
-        if (obj.name) {
-          const raw = obj.parameters ?? obj.arguments ?? obj.input ?? obj.args ?? {};
-          const args = typeof raw === 'string' ? JSON.parse(raw) : raw;
-          const matched = [...knownTools].find((t) => obj.name === t || obj.name.includes(t));
-          if (matched) results.push({ name: matched, args });
-        }
-      }
-    } catch {}
-  }
-
-  return results;
 }
 
 // ─── Main App ─────────────────────────────────────────────────────────────────
@@ -480,6 +443,41 @@ export function App({
       return;
     }
 
+    if (cmd === '/diff') {
+      setQuery('');
+      setHistoryIndex(-1);
+      setDraftQuery('');
+      try {
+        const { stdout } = await execa({ shell: true, reject: false })`git diff --stat && git diff`;
+        const content = stdout.trim()
+          ? `\`\`\`diff\n${stdout.slice(0, 6000)}\n\`\`\``
+          : 'Working tree is clean. No git changes detected.';
+        setHistory((prev) => [...prev, { role: 'assistant', content, timestamp: now() }]);
+      } catch (err: any) {
+        setHistory((prev) => [
+          ...prev,
+          { role: 'assistant', content: `Could not retrieve git diff: ${err.message}`, timestamp: now() },
+        ]);
+      }
+      return;
+    }
+
+    if (cmd === '/undo') {
+      setQuery('');
+      setHistoryIndex(-1);
+      setDraftQuery('');
+      const res = await undoLastEdit();
+      setHistory((prev) => [
+        ...prev,
+        {
+          role: 'assistant',
+          content: res.ok ? `⎌ ${res.message}` : `✖ ${res.message}`,
+          timestamp: now(),
+        },
+      ]);
+      return;
+    }
+
     if (cmd === '/whitelist') {
       setQuery('');
       setHistoryIndex(-1);
@@ -530,179 +528,72 @@ export function App({
 
     const client = getLocalClient(provider, config?.baseURLs?.[provider]);
 
+    const SYSTEM_PROMPT = {
+      role: 'system' as const,
+      content:
+        'You are a helpful local AI CLI assistant.\n\n' +
+        'RULES:\n' +
+        '1. ONLY use the explicitly provided tools: read_file, write_file, edit_file, run_command, search_workspace, browser_action. Prefer edit_file over write_file when editing existing files to avoid rewriting.\n' +
+        '2. If the user asks you to "write a function" or "write code", output the code directly in markdown format. DO NOT use tools for this.\n' +
+        '3. ONLY use tools when interacting with the user\'s local filesystem, terminal, or browsing the web.',
+    };
+
+    const historyWithSystem = localHistory.some((m) => m.role === 'system')
+      ? localHistory
+      : [SYSTEM_PROMPT, ...localHistory];
+
+    abortControllerRef.current = new AbortController();
+
+    const currentSessionId = sessionIdRef.current ?? generateSessionId();
+    sessionIdRef.current = currentSessionId;
+
     try {
-      while (true) {
-        setStreamingContent('');
-
-        const hasToolsInHistory = localHistory.some(
-          (m) => m.role === 'tool' || (m.tool_calls && m.tool_calls.length > 0)
-        );
-        const isToolCommand =
-          /read|write|file|create|make|code|folder|directory|script|app|run|test|execute|command|install|npm|yarn|pnpm|search|find|workspace|scan|browse|navigate|click|screenshot|browser|web|url|internet/i.test(
-            userInput
-          ) || hasToolsInHistory;
-
-        const requestConfig: any = {
-          model: selectedModel,
-          messages: [
-            {
-              role: 'system',
-              content:
-                'You are a helpful local AI CLI assistant.\n\n' +
-                'RULES:\n' +
-                '1. ONLY use the explicitly provided tools: read_file, write_file, run_command, search_workspace, browser_action. NEVER invent or hallucinate new tools.\n' +
-                '2. If the user asks you to "write a function" or "write code", output the code directly in markdown format. DO NOT use tools for this.\n' +
-                '3. ONLY use tools when interacting with the user\'s local filesystem, terminal, or browsing the web.',
-            },
-            ...localHistory.map((m) => ({
-              role: m.role,
-              content: m.content,
-              name: m.name,
-              tool_call_id: m.tool_call_id,
-              tool_calls: m.tool_calls,
-            })),
-          ],
-          stream: true,
-        };
-
-        if (isToolCommand) {
-          requestConfig.tools = toolDefinitions;
-          requestConfig.tool_choice = 'auto';
-        }
-
-        let accumulatedContent = '';
-        let toolCalls: any[] = [];
-
-        abortControllerRef.current = new AbortController();
-
-        try {
-          const response = await client.chat.completions.create(requestConfig, {
-            signal: abortControllerRef.current.signal,
-          });
-
-          for await (const chunk of response as any) {
-            const delta = chunk.choices?.[0]?.delta;
-            if (!delta) continue;
-            if (delta.content) {
-              accumulatedContent += delta.content;
-              setStreamingContent((prev) => prev + delta.content);
-            }
-            if (delta.tool_calls) {
-              for (const tc of delta.tool_calls) {
-                const index = tc.index;
-                if (!toolCalls[index]) {
-                  toolCalls[index] = {
-                    id: tc.id || '',
-                    type: 'function',
-                    function: { name: tc.function?.name || '', arguments: '' },
-                  };
-                }
-                if (tc.function?.name) toolCalls[index].function.name += tc.function.name;
-                if (tc.function?.arguments) toolCalls[index].function.arguments += tc.function.arguments;
-              }
-            }
+      const updatedHistory = await runAgentLoop({
+        client,
+        config: config!,
+        initialHistory: historyWithSystem,
+        sessionId: currentSessionId,
+        signal: abortControllerRef.current.signal,
+        requestApproval: async (toolName, args, pattern) => {
+          const res = await requestApproval(toolName, args, pattern);
+          if (res.always) {
+            const newConfig: LocusConfig = {
+              defaultProvider: 'ollama',
+              defaultModel: '',
+              ...config,
+              autoApprove: [...(config?.autoApprove ?? []), pattern],
+            };
+            setConfig(newConfig);
+            await saveConfig(newConfig);
           }
-        } catch (err: any) {
-          if (err.name === 'AbortError') {
-            break;
-          }
-          throw err;
-        } finally {
-          abortControllerRef.current = null;
-        }
-
-        const finalContent = accumulatedContent || null;
-
-        // ── Pseudo-tool-call intercept ──────────────────────────────────────
-        let isPseudoToolCall = false;
-        if (finalContent && toolCalls.length === 0) {
-          const pseudoCalls = parsePseudoToolCalls(finalContent);
-          if (pseudoCalls.length > 0) {
-            isPseudoToolCall = true;
+          return res;
+        },
+        onEvent: (event) => {
+          if (event.type === 'content') {
+            setStreamingContent((prev) => prev + event.content);
+          } else if (event.type === 'tool_start') {
             setStreamingContent('');
-            toolCalls = pseudoCalls.map((pseudo, idx) => ({
-              id: `pseudo-${Date.now()}-${idx}`,
-              function: { name: pseudo.name, arguments: JSON.stringify(pseudo.args) },
-            }));
+            setAgentStatus(event.name.replace(/_/g, ' '));
+          } else if (event.type === 'tool_result') {
+            setAgentStatus('Thinking');
+          } else if (event.type === 'error') {
+            setErrorMsg(event.error);
           }
-        }
+        },
+      });
 
-        if (finalContent && toolCalls.length === 0) {
-          localHistory.push({ role: 'assistant', content: finalContent, timestamp: now() });
-          setHistory([...localHistory]);
-          break; // text-only response — we're done
-        }
-
-        if (toolCalls.length > 0) {
-          toolCalls = toolCalls.filter(Boolean);
-          localHistory.push({
-            role: 'assistant',
-            content: isPseudoToolCall ? null : finalContent,
-            tool_calls: toolCalls,
-          });
-
-          for (const call of toolCalls) {
-            const name = normalizeToolName(call.function.name);
-
-            let args: Record<string, any>;
-            try {
-              args = JSON.parse(call.function.arguments || '{}');
-            } catch {
-              args = {};
-            }
-
-            setAgentStatus(name.replace('_', ' '));
-
-            // ── Security gate for destructive tools ──────────────────────
-            let result: string;
-            if (GUARDED_TOOLS.has(name)) {
-              const execName =
-                name === 'run_command' ? (args.command ?? '').trim().split(/\s+/)[0] : '';
-              const pattern = name === 'run_command' ? `run_command:${execName}` : name;
-
-              if (!config?.autoApprove?.includes(pattern)) {
-                const approvalResult = await requestApproval(name, args, pattern);
-                if (!approvalResult.approved) {
-                  localHistory.push({
-                    role: 'tool',
-                    name,
-                    tool_call_id: call.id,
-                    content: JSON.stringify({ denied: true }),
-                    rejected: true,
-                  });
-                  continue;
-                }
-                if (approvalResult.always) {
-                  const newConfig: LocusConfig = {
-                    defaultProvider: 'ollama',
-                    defaultModel: '',
-                    ...config,
-                    autoApprove: [...(config?.autoApprove ?? []), pattern],
-                  };
-                  setConfig(newConfig);
-                  await saveConfig(newConfig);
-                }
-              }
-            }
-            result = await executeTool(name, args);
-
-            localHistory.push({ role: 'tool', name, tool_call_id: call.id, content: result });
-          }
-
-          setHistory([...localHistory]);
-          setAgentStatus('Synthesizing');
-          continue;
-        }
-
-        break;
-      }
+      // Filter out system prompt for terminal display
+      const displayHistory = updatedHistory.filter((m) => m.role !== 'system');
+      setHistory(displayHistory);
     } catch (error: any) {
-      setErrorMsg(error.message);
+      if (error.name !== 'AbortError') {
+        setErrorMsg(error.message);
+      }
     } finally {
       setLoading(false);
       setAgentStatus(null);
       setStreamingContent('');
-      persistSession(provider, selectedModel, localHistory);
+      abortControllerRef.current = null;
     }
   };
 
@@ -876,7 +767,16 @@ export function App({
         {saveConfirmation ? (
           <Text color="green">✓ Saved as default</Text>
         ) : (
-          turnCount > 0 && <Text dimColor>{turnCount} turn{turnCount !== 1 ? 's' : ''}</Text>
+          turnCount > 0 && (
+            <Text dimColor>
+              {turnCount} turn{turnCount !== 1 ? 's' : ''} · ~{Math.ceil(
+                history.reduce(
+                  (sum, m) => sum + (m.content?.length || 0) + (JSON.stringify(m.tool_calls || '').length),
+                  0
+                ) / 3.8
+              ).toLocaleString()} tokens
+            </Text>
+          )
         )}
       </Box>
 

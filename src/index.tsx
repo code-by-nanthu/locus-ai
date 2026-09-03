@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 import React from 'react';
+import * as fs from 'fs/promises';
+import * as path from 'path';
 import { render } from 'ink';
 import { App } from './cli/components/App.js';
 import { loadSession, listSessions, listSessionsDetail } from './core/session.js';
@@ -72,10 +74,115 @@ async function resolveInitialSession(
   return empty;
 }
 
+// ── Crash handling & safe shutdown (I-6) ────────────────────────────────────
+
+function setupCrashHandlers() {
+  process.on('uncaughtException', (err) => {
+    console.error('\n\x1b[31m[Locus Fatal Error]\x1b[0m Uncaught exception:', err.message);
+    if (process.env.LOCUS_DEBUG) console.error(err.stack);
+    process.exit(1);
+  });
+
+  process.on('unhandledRejection', (reason) => {
+    console.error('\n\x1b[31m[Locus Error]\x1b[0m Unhandled promise rejection:', reason);
+    if (process.env.LOCUS_DEBUG && reason instanceof Error) console.error(reason.stack);
+  });
+
+  const cleanup = () => {
+    // Ensure terminal cursor is restored
+    process.stdout.write('\x1b[?25h');
+    process.exit(0);
+  };
+
+  process.on('SIGINT', cleanup);
+  process.on('SIGTERM', cleanup);
+}
+
+// ── Update check against release manifest (D-6) ─────────────────────────────
+
+async function checkForUpdates(): Promise<void> {
+  try {
+    const { getConfigDir } = await import('./core/config.js');
+    const stampFile = path.join(getConfigDir(), 'last_update_check.json');
+    let lastCheck = 0;
+    try {
+      const data = JSON.parse(await fs.readFile(stampFile, 'utf-8'));
+      lastCheck = data.timestamp || 0;
+    } catch {}
+
+    // Check at most once every 24 hours
+    if (Date.now() - lastCheck < 24 * 60 * 60 * 1000) return;
+
+    await fs.writeFile(stampFile, JSON.stringify({ timestamp: Date.now() }), 'utf-8');
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 1200);
+    const res = await fetch('https://api.github.com/repos/code-by-nanthu/locus-ai/releases/latest', {
+      signal: controller.signal,
+      headers: { 'User-Agent': 'locus-cli' },
+    });
+    clearTimeout(timer);
+
+    if (res.ok) {
+      const release: any = await res.json();
+      const latestTag = release.tag_name?.replace(/^v/, '');
+      if (latestTag && latestTag !== '1.0.0') {
+        console.log(`\n\x1b[33m💡 Update available: v1.0.0 → v${latestTag} (https://github.com/code-by-nanthu/locus-ai/releases)\x1b[0m\n`);
+      }
+    }
+  } catch {}
+}
+
 // ── Main entry point ──────────────────────────────────────────────────────────
 
 async function main() {
+  setupCrashHandlers();
+  checkForUpdates().catch(() => {});
   const args = process.argv.slice(2);
+
+  // ── --debug flag (I-5) ─────────────────────────────────────────────────────
+  if (args.includes('--debug')) {
+    process.env.LOCUS_DEBUG = 'true';
+  }
+
+  // ── --docker flag (S-10) ───────────────────────────────────────────────────
+  if (args.includes('--docker')) {
+    process.env.LOCUS_SANDBOX = 'docker';
+  }
+
+  // ── --version / -v ─────────────────────────────────────────────────────────
+  if (args.includes('--version') || args.includes('-v')) {
+    console.log('locus v1.0.0');
+    process.exit(0);
+  }
+
+  // ── --help / -h ────────────────────────────────────────────────────────────
+  if (args.includes('--help') || args.includes('-h') || args[0] === 'help') {
+    console.log(`
+Locus — Privacy-First Local AI Coding Agent & Orchestrator
+
+Usage:
+  locus [subcommand] [options]
+
+Subcommands:
+  (none)                  Launch the interactive terminal assistant (React Ink UI)
+  ui                      Launch the browser-based Web UI with loopback security
+  diff                    Inspect git working tree modifications and diff statistics
+  commit                  Generate Conventional Commit message from staged changes
+  export [id] [options]   Export session history to Markdown, JSON, or HTML
+  sessions                List all saved conversations and session timestamps
+
+Options:
+  --session <id>          Resume a specific conversation session
+  --format <md|json|html> Export output format (for export subcommand)
+  --out <file>            Custom output destination file
+  --debug                 Enable verbose debug diagnostics and logs
+  --docker                Execute commands inside isolated Docker sandbox container
+  -v, --version           Print the version of Locus
+  -h, --help              Show this help menu
+`);
+    process.exit(0);
+  }
 
   // ── locus sessions — list all saved sessions and exit ──────────────────────
   if (args[0] === 'sessions') {
@@ -110,9 +217,25 @@ async function main() {
     return;
   }
 
-  // ── locus export [id] ──────────────────────────────────────────────────────
+  // ── locus diff ─────────────────────────────────────────────────────────────
+  if (args[0] === 'diff') {
+    const { execa } = await import('execa');
+    try {
+      const { stdout } = await execa({ shell: true, reject: false })`git diff --stat && git diff`;
+      if (stdout.trim()) {
+        console.log('\n' + stdout.trim() + '\n');
+      } else {
+        console.log('\n  Working tree is clean. No git changes detected.\n');
+      }
+    } catch (err: any) {
+      console.error(`\n  Failed to inspect git diff: ${err.message}\n`);
+    }
+    process.exit(0);
+  }
+
+  // ── locus export [id] [--format md|json|html] ─────────────────────────────
   if (args[0] === 'export') {
-    await runExportCommand(args[1]);
+    await runExportCommand(args.slice(1));
     return;
   }
 

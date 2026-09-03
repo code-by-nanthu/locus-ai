@@ -2,7 +2,20 @@
 // Centralised here to avoid duplication across CLI and Web code paths.
 
 /** Tools that require explicit user approval before running. */
-export const GUARDED_TOOLS = new Set(['write_file', 'run_command']);
+export const GUARDED_TOOLS = new Set(['write_file', 'edit_file', 'run_command', 'browser_action']);
+
+/** Derives the authorization pattern key for a given tool call. */
+export function getAuthPattern(name: string, args?: Record<string, any>): string {
+  if (name === 'run_command') {
+    const execName = (args?.command ?? '').trim().split(/\s+/)[0] || 'command';
+    return `run_command:${execName}`;
+  }
+  if (name === 'browser_action') {
+    const action = args?.action || 'action';
+    return `browser_action:${action}`;
+  }
+  return name;
+}
 
 /**
  * Fallback starter prompts shown when the LLM suggestion endpoint is

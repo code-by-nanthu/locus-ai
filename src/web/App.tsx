@@ -1,7 +1,8 @@
 import { useState, useEffect, useRef, type ReactNode } from 'react';
 import {
   Menu, Plus, ArrowUp, Terminal, AlertTriangle, Sun, Moon, Bot,
-  Copy, Check, ChevronRight, ChevronDown, XCircle, CheckCircle2, MessageSquare, Trash2, Settings, Server, Pencil
+  Copy, Check, ChevronRight, ChevronDown, XCircle, CheckCircle2, MessageSquare, Trash2, Settings, Server, Pencil,
+  Search, FolderGit2, RotateCcw, Keyboard, Command
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import { clsx, type ClassValue } from 'clsx';
@@ -37,12 +38,19 @@ type Message = {
   tool_calls?: any[];
   tool_call_id?: string;
   isTemp?: boolean;
+  error?: boolean;
 };
 
 export default function App() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [sessions, setSessions] = useState<Session[]>([]);
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
+  const [sessionSearch, setSessionSearch] = useState('');
+  const [cwd, setCwd] = useState('');
+  const [transportError, setTransportError] = useState<string | null>(null);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const isNearBottomRef = useRef(true);
+  const mainScrollRef = useRef<HTMLElement | null>(null);
 
   // Theme state
   const [isDark, setIsDark] = useState(false);
@@ -62,15 +70,13 @@ export default function App() {
     }
   }, [isDark]);
 
-  const [history, setHistory] = useState<Message[]>([
-    { role: 'assistant', content: 'Welcome to Locus. How can I help you today?' }
-  ]);
+  const [history, setHistory] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
 
   // SSE Streaming state
   const [streamingContent, setStreamingContent] = useState('');
-  const [streamingTool, setStreamingTool] = useState<{ name: string, args: string, error?: boolean, result?: string } | null>(null);
+  const [streamingTool, setStreamingTool] = useState<{ id?: string; name: string, args: string, error?: boolean, result?: string } | null>(null);
 
   // Approval state
 
@@ -82,6 +88,10 @@ export default function App() {
   const [modalModel, setModalModel] = useState('');
   const [modalBaseUrl, setModalBaseUrl] = useState('');
   const [isSavingConfig, setIsSavingConfig] = useState(false);
+
+  const estimatedTokens = Math.ceil(
+    history.reduce((sum, m) => sum + (m.content?.length || 0) + JSON.stringify(m.tool_calls || '').length, 0) / 3.8
+  );
 
   const loadConfig = async () => {
     try {
@@ -95,7 +105,38 @@ export default function App() {
 
   useEffect(() => {
     loadConfig();
+    fetch('/api/context')
+      .then((r) => r.json())
+      .then((d) => setCwd(d.cwd || ''))
+      .catch(() => {});
   }, []);
+
+  // Global Keyboard Shortcuts (W-10)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement)?.tagName;
+      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+        e.preventDefault();
+        inputRef.current?.focus();
+      } else if ((e.metaKey || e.ctrlKey) && e.key === 'n') {
+        e.preventDefault();
+        startNewSession();
+      } else if (e.key === 'Escape') {
+        if (isGenerating && currentSessionId) {
+          e.preventDefault();
+          fetch(`/api/chat/${currentSessionId}/abort`, { method: 'POST' }).catch(() => {});
+          setIsGenerating(false);
+        } else if (shortcutsOpen) {
+          setShortcutsOpen(false);
+        }
+      } else if (e.key === '?' && !['INPUT', 'TEXTAREA'].includes(tag)) {
+        e.preventDefault();
+        setShortcutsOpen((prev) => !prev);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isGenerating, currentSessionId, shortcutsOpen]);
 
   const fetchModels = async (provider: string, baseUrl?: string) => {
     try {
@@ -213,15 +254,34 @@ export default function App() {
 
   const startNewSession = () => {
     setCurrentSessionId(null);
-    setHistory([
-      { role: 'assistant', content: 'Started a new session.' }
-    ]);
+    setHistory([]);
     setSidebarOpen(false);
+  };
+
+  const handleRetry = async () => {
+    if (isGenerating || !currentSessionId || history.length < 2) return;
+    try {
+      const lastUserMsg = [...history].reverse().find((m) => m.role === 'user');
+      const userText = lastUserMsg?.content || '';
+      const res = await fetch(`/api/session/${currentSessionId}/truncate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ messageIndex: Math.max(0, history.length - 2) }),
+      });
+      if (res.ok) {
+        const updated = await res.json();
+        setHistory(updated.messages);
+        setInput(userText);
+      }
+    } catch (err: any) {
+      setTransportError('Failed to truncate session: ' + err.message);
+    }
   };
 
   const handleSend = async () => {
     if (!input.trim() || isGenerating) return;
 
+    setTransportError(null);
     const newHistory = [...history, { role: 'user' as const, content: input.trim() }];
     setHistory(newHistory);
     setInput('');
@@ -235,6 +295,17 @@ export default function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ history: newHistory, sessionId: currentSessionId })
       });
+
+      if (!response.ok) {
+        let errorMsg = `Server error (${response.status})`;
+        try {
+          const errData = await response.json();
+          errorMsg = errData.error || errData.message || errorMsg;
+        } catch {}
+        setTransportError(errorMsg);
+        setIsGenerating(false);
+        return;
+      }
 
       // Handle Slash Commands
       const ctype = response.headers.get('content-type');
@@ -255,8 +326,9 @@ export default function App() {
 
       let tempContent = '';
       let tempTool: typeof streamingTool = null;
+      let isDone = false;
 
-      while (true) {
+      while (!isDone) {
         const { value, done } = await reader.read();
         if (done) break;
 
@@ -270,18 +342,25 @@ export default function App() {
 
           if (dataStr === '[DONE]') {
             if (tempContent) {
-              setHistory(prev => [...prev, { role: 'assistant', content: tempContent }]);
+              setHistory(prev => [...prev, { role: 'assistant', content: unwrapToolJson(tempContent) }]);
             }
+            isDone = true;
             break;
           }
 
           try {
             const data = JSON.parse(dataStr);
-            if (data.type === 'content') {
+            if (data.type === 'session' && data.sessionId) {
+              setCurrentSessionId(data.sessionId);
+            } else if (data.type === 'error') {
+              setTransportError(data.error || 'Execution error');
+              isDone = true;
+              break;
+            } else if (data.type === 'content') {
               tempContent += data.content;
               setStreamingContent(tempContent);
             } else if (data.type === 'tool_start') {
-              tempTool = { name: data.name, args: data.args };
+              tempTool = { id: data.id, name: data.name, args: data.args };
               setStreamingTool(tempTool);
             } else if (data.type === 'tool_auth_required') {
               setApprovalReq({
@@ -292,17 +371,18 @@ export default function App() {
               });
             } else if (data.type === 'tool_result') {
               const resultStr = typeof data.result === 'string' ? data.result : JSON.stringify(data.result, null, 2);
-              const isError = resultStr.includes('"denied": true') || resultStr.includes('"error":');
+              const isError = data.ok === false || resultStr.includes('"denied": true') || resultStr.includes('"error":');
 
               if (tempTool) {
                 const finalTool = { ...tempTool, result: resultStr, error: isError };
+                const callId = data.id || finalTool.id || `call_${Date.now()}`;
                 setHistory(prev => [
                   ...prev,
                   {
                     role: 'assistant',
-                    tool_calls: [{ id: 'call_' + Date.now(), type: 'function', function: { name: finalTool.name, arguments: finalTool.args } }]
+                    tool_calls: [{ id: callId, type: 'function', function: { name: finalTool.name, arguments: finalTool.args } }]
                   },
-                  { role: 'tool', name: finalTool.name, content: finalTool.result }
+                  { role: 'tool', tool_call_id: callId, name: finalTool.name, content: finalTool.result }
                 ]);
               }
               tempContent = '';
@@ -342,8 +422,9 @@ export default function App() {
 
 
   // ── derived view state (no side effects) ─────────────────────────────────
-  const isFreshChat = !currentSessionId && history.length <= 1;
-  const visibleHistory = isFreshChat ? [] : history;
+  const nonSystemHistory = history.filter(m => m.role !== ('system' as any));
+  const isFreshChat = !currentSessionId && nonSystemHistory.length === 0;
+  const visibleHistory = isFreshChat ? [] : nonSystemHistory;
 
   // Dynamic starters
   const [starters, setStarters] = useState<string[]>([
@@ -401,7 +482,7 @@ export default function App() {
             <span className="font-semibold tracking-tight">Locus</span>
           </div>
 
-          <div className="px-3 pb-3">
+          <div className="px-3 pb-3 flex flex-col gap-2">
             <button
               onClick={startNewSession}
               className="w-full h-9 px-3 inline-flex items-center gap-2 rounded-lg bg-raised border border-line text-sm font-medium hover:border-line-strong transition-colors"
@@ -409,6 +490,16 @@ export default function App() {
               <Plus size={15} strokeWidth={2.25} />
               New chat
             </button>
+            <div className="relative">
+              <Search size={13} className="absolute left-2.5 top-2.5 text-ink-subtle" />
+              <input
+                type="text"
+                value={sessionSearch}
+                onChange={(e) => setSessionSearch(e.target.value)}
+                placeholder="Search chats..."
+                className="w-full h-8 pl-8 pr-2.5 rounded-md bg-surface text-[12px] text-ink placeholder:text-ink-subtle border border-line focus:outline-none focus:border-accent"
+              />
+            </div>
           </div>
 
           <div className="flex-1 overflow-y-auto overscroll-contain px-2 pb-2">
@@ -420,7 +511,15 @@ export default function App() {
                 </p>
               </div>
             ) : (
-              groupSessions(sessions).map(group => (
+              groupSessions(
+                sessionSearch.trim()
+                  ? sessions.filter(
+                      (s) =>
+                        (s.title || '').toLowerCase().includes(sessionSearch.toLowerCase()) ||
+                        s.id.toLowerCase().includes(sessionSearch.toLowerCase())
+                    )
+                  : sessions
+              ).map(group => (
                 <div key={group.label} className="mb-3">
                   <div className="px-3 pb-1 pt-2 text-[11px] font-medium text-ink-subtle">
                     {group.label}
@@ -464,7 +563,7 @@ export default function App() {
                               "block text-[13px] font-medium truncate",
                               s.id === currentSessionId ? "text-ink" : "text-ink-muted group-hover:text-ink"
                             )}>
-                              {s.title || `Chat ${s.id.slice(-6)}`}
+                              {formatSessionTitle(s.id, s.title)}
                             </span>
                             <span className="block text-[11px] text-ink-subtle truncate">
                               {formatTime(s.createdAt)}
@@ -484,7 +583,7 @@ export default function App() {
                           <button
                             onClick={(e) => {
                               e.stopPropagation();
-                              setEditSessionTitle(s.title || `Chat ${s.id.slice(-6)}`);
+                              setEditSessionTitle(formatSessionTitle(s.id, s.title));
                               setEditingSessionId(s.id);
                             }}
                             className="h-7 w-7 inline-flex items-center justify-center rounded-md text-ink-subtle hover:text-ink hover:bg-surface transition-colors"
@@ -551,7 +650,7 @@ export default function App() {
                 &gt;_
               </span>
               <h1 className="text-[15px] font-semibold tracking-tight truncate">
-                {currentSessionId ? `Chat ${currentSessionId.slice(-6)}` : 'New chat'}
+                {formatSessionTitle(currentSessionId || undefined)}
               </h1>
             </div>
           </div>
@@ -567,6 +666,20 @@ export default function App() {
                 Working
               </span>
             )}
+            {history.length > 0 && (
+              <span className="hidden md:inline-flex items-center h-7 px-2.5 rounded-md text-[11px] font-mono text-ink-subtle bg-surface-2 border border-line">
+                ~{estimatedTokens.toLocaleString()} tokens
+              </span>
+            )}
+            {cwd && (
+              <span
+                className="hidden lg:inline-flex items-center gap-1 h-7 px-2.5 rounded-md text-[11px] font-mono text-ink-subtle bg-surface-2 border border-line max-w-[220px] truncate"
+                title={cwd}
+              >
+                <FolderGit2 size={12} className="shrink-0" />
+                <span className="truncate">{cwd.split('/').pop() || cwd}</span>
+              </span>
+            )}
             <button
               onClick={openSettings}
               className="hidden sm:inline-flex items-center gap-1.5 h-9 px-3 mr-1 rounded-lg text-[13px] font-medium bg-surface-2 hover:bg-surface border border-line hover:border-line-strong transition-colors text-ink-muted hover:text-ink"
@@ -575,6 +688,12 @@ export default function App() {
               <Server size={14} className="text-accent" />
               <span className="max-w-[100px] truncate">{config?.defaultModel || 'Settings'}</span>
             </button>
+            <IconButton
+              label="Keyboard shortcuts (?)"
+              onClick={() => setShortcutsOpen(true)}
+            >
+              <Keyboard size={18} />
+            </IconButton>
             <IconButton label="New chat" onClick={startNewSession}>
               <Plus size={18} />
             </IconButton>
@@ -582,12 +701,33 @@ export default function App() {
               label={isDark ? 'Light appearance' : 'Dark appearance'}
               onClick={() => setIsDark(!isDark)}
             >
-              {isDark ? <Sun size={18} /> : <Moon size={18} />}
+              <Sun size={18} />
             </IconButton>
           </div>
         </header>
 
-        <main className="flex-1 overflow-y-auto overscroll-contain">
+        {/* Transport Error Banner (W-6) */}
+        {transportError && (
+          <div className="mx-4 sm:mx-6 mt-3 p-3 bg-danger-soft border border-danger/30 rounded-lg flex items-center justify-between text-xs text-danger shrink-0">
+            <div className="flex items-center gap-2">
+              <AlertTriangle size={14} className="shrink-0" />
+              <span>{transportError}</span>
+            </div>
+            <button onClick={() => setTransportError(null)} className="underline font-medium hover:opacity-80">
+              Dismiss
+            </button>
+          </div>
+        )}
+
+        <main
+          ref={mainScrollRef}
+          onScroll={() => {
+            if (!mainScrollRef.current) return;
+            const { scrollTop, scrollHeight, clientHeight } = mainScrollRef.current;
+            isNearBottomRef.current = scrollHeight - (scrollTop + clientHeight) < 120;
+          }}
+          className="flex-1 overflow-y-auto overscroll-contain"
+        >
           {isFreshChat ? (
             <Welcome onPick={fillPrompt} starters={starters} loading={startersLoading} />
           ) : (
@@ -607,6 +747,20 @@ export default function App() {
               )}
 
               {isGenerating && !streamingContent && !streamingTool && <ThinkingRow />}
+
+              {/* Retry Turn Button (W-5) */}
+              {!isGenerating && visibleHistory.length >= 2 && currentSessionId && visibleHistory[visibleHistory.length - 1]?.role === 'assistant' && (
+                <div className="flex justify-end pt-1">
+                  <button
+                    onClick={handleRetry}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-ink-subtle hover:text-ink hover:bg-raised border border-line transition-colors"
+                    title="Retry last turn"
+                  >
+                    <RotateCcw size={13} />
+                    Retry turn
+                  </button>
+                </div>
+              )}
 
               <div ref={chatEndRef} />
             </div>
@@ -854,6 +1008,55 @@ export default function App() {
         </div>
       )}
 
+      {/* ───────────────────────── Shortcuts dialog (W-10) ───────────────────────── */}
+      {shortcutsOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/45 dark:bg-black/65 backdrop-blur-[3px]">
+          <div
+            role="dialog"
+            aria-modal="true"
+            className="pop w-full max-w-sm bg-raised border border-line rounded-2xl shadow-panel overflow-hidden p-6"
+          >
+            <div className="flex items-center gap-3 mb-4">
+              <span className="h-9 w-9 shrink-0 rounded-lg bg-accent-soft border border-accent-line flex items-center justify-center">
+                <Keyboard size={18} className="text-accent" />
+              </span>
+              <div>
+                <h2 className="text-[16px] font-semibold tracking-tight">Keyboard Shortcuts</h2>
+                <p className="text-[12px] text-ink-subtle">Quick keys to navigate Locus</p>
+              </div>
+            </div>
+
+            <div className="space-y-2.5 text-[13px]">
+              <div className="flex items-center justify-between py-1 border-b border-line">
+                <span className="text-ink-muted">Focus composer</span>
+                <kbd className="px-2 py-0.5 rounded bg-surface border border-line font-mono text-[11px] text-ink">⌘ K</kbd>
+              </div>
+              <div className="flex items-center justify-between py-1 border-b border-line">
+                <span className="text-ink-muted">New chat</span>
+                <kbd className="px-2 py-0.5 rounded bg-surface border border-line font-mono text-[11px] text-ink">⌘ N</kbd>
+              </div>
+              <div className="flex items-center justify-between py-1 border-b border-line">
+                <span className="text-ink-muted">Cancel generation</span>
+                <kbd className="px-2 py-0.5 rounded bg-surface border border-line font-mono text-[11px] text-ink">Esc</kbd>
+              </div>
+              <div className="flex items-center justify-between py-1 border-b border-line">
+                <span className="text-ink-muted">Toggle shortcuts</span>
+                <kbd className="px-2 py-0.5 rounded bg-surface border border-line font-mono text-[11px] text-ink">?</kbd>
+              </div>
+            </div>
+
+            <div className="mt-5 flex justify-end">
+              <button
+                onClick={() => setShortcutsOpen(false)}
+                className="h-8 px-3 rounded-lg text-xs font-medium bg-surface border border-line hover:border-ink-subtle transition-colors"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }
@@ -1004,14 +1207,56 @@ const mdComponents: any = {
 
 /* ── Turns ──────────────────────────────────────────────────────────────── */
 
-export function MessageBubble({ msg }: { msg: Message }) {
-  if (msg.role === 'tool' || msg.tool_calls) {
-    const name = msg.name || msg.tool_calls?.[0]?.function?.name;
-    const content = msg.content || msg.tool_calls?.[0]?.function?.arguments;
-    if (!name) return null;
+function unwrapToolJson(raw: string): string {
+  try {
+    let trimmed = raw.trim();
+    if (trimmed.startsWith('```')) {
+      trimmed = trimmed.replace(/^```[a-zA-Z0-9_-]*\n?/, '').replace(/\n?```$/, '').trim();
+    }
+    if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
+      const obj = JSON.parse(trimmed);
+      if (obj.name && (obj.parameters || obj.arguments || obj.code || obj.text)) {
+        const p = obj.parameters || obj.arguments || obj;
+        const c = p.code || p.text || p.content || p.story || p.output || p.message;
+        if (typeof c === 'string') {
+          const logs = [...c.matchAll(/console\.log\((['"`])([\s\S]*?)\1\);?/g)];
+          if (logs.length > 0) {
+            return logs
+              .map((m) => m[2].replace(/\\n/g, '\n').replace(/\\"/g, '"').replace(/\\'/g, "'").replace(/\\\n/g, ' '))
+              .join('\n\n');
+          }
+          return c;
+        }
+      }
+    }
+  } catch {}
+  return raw;
+}
 
-    const isError = typeof content === 'string' && (content.includes('"denied": true') || content.includes('"error":'));
-    return <ToolTurn name={name} content={content} isError={isError} isTemp={msg.isTemp} />;
+function formatSessionTitle(id?: string, title?: string): string {
+  if (title && title.trim()) return title.trim();
+  if (!id) return 'New chat';
+  const parts = id.split('T');
+  if (parts.length === 2) {
+    const time = parts[1].split('.')[0].replace(/-/g, ':');
+    return `Chat ${time}`;
+  }
+  return `Chat ${id.slice(-6)}`;
+}
+
+export function MessageBubble({ msg }: { msg: Message }) {
+  if (msg.role === ('system' as any)) return null;
+  if (msg.role === 'tool') {
+    let isErr = Boolean(msg.error);
+    if (!isErr && typeof msg.content === 'string') {
+      try {
+        const parsed = JSON.parse(msg.content);
+        isErr = parsed.ok === false || parsed.success === false || Boolean(parsed.error) || Boolean(parsed.denied);
+      } catch {
+        isErr = msg.content.includes('"denied": true') || msg.content.includes('"error":');
+      }
+    }
+    return <ToolTurn name={msg.name || 'tool'} content={msg.content} isError={isErr} isTemp={msg.isTemp} />;
   }
 
   if (msg.role === 'user') {
@@ -1029,12 +1274,14 @@ export function MessageBubble({ msg }: { msg: Message }) {
     );
   }
 
+  const cleanContent = unwrapToolJson(msg.content || '');
+
   return (
     <div className="rise group flex gap-3 sm:gap-3.5">
       <AssistantAvatar />
       <div className="min-w-0 flex-1">
         <div className={cn("md", msg.isTemp && "caret")}>
-          <ReactMarkdown components={mdComponents}>{msg.content || ''}</ReactMarkdown>
+          <ReactMarkdown components={mdComponents}>{cleanContent}</ReactMarkdown>
         </div>
         {!msg.isTemp && (
           <div className="mt-1.5 -ml-1.5 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">

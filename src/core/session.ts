@@ -15,6 +15,7 @@ export interface SessionMessage {
 }
 
 export interface SessionFile {
+  schemaVersion?: number;
   id: string;
   title?: string;
   provider: string;
@@ -57,6 +58,7 @@ export async function saveSession(
   await fs.mkdir(dir, { recursive: true });
 
   const session: SessionFile = {
+    schemaVersion: 1,
     id,
     provider,
     model,
@@ -64,6 +66,30 @@ export async function saveSession(
     messages,
   };
   await fs.writeFile(getSessionPath(id), JSON.stringify(session, null, 2), 'utf-8');
+  await updateSessionIndex({
+    id,
+    provider,
+    model,
+    createdAt: session.createdAt,
+    turns: messages.filter((m) => m.role === 'user').length,
+  });
+}
+
+function getIndexPath(): string {
+  return path.join(getHistoryDir(), 'sessions_index.json');
+}
+
+async function updateSessionIndex(summary: SessionSummary): Promise<void> {
+  try {
+    const indexPath = getIndexPath();
+    let index: SessionSummary[] = [];
+    try {
+      index = JSON.parse(await fs.readFile(indexPath, 'utf-8'));
+    } catch {}
+    index = index.filter((item) => item.id !== summary.id);
+    index.unshift(summary);
+    await fs.writeFile(indexPath, JSON.stringify(index, null, 2), 'utf-8');
+  } catch {}
 }
 
 /**
@@ -86,6 +112,12 @@ export async function loadSession(id: string): Promise<SessionFile | null> {
 export async function deleteSession(id: string): Promise<void> {
   try {
     await fs.unlink(getSessionPath(id));
+    const indexPath = getIndexPath();
+    try {
+      let index: SessionSummary[] = JSON.parse(await fs.readFile(indexPath, 'utf-8'));
+      index = index.filter((item) => item.id !== id);
+      await fs.writeFile(indexPath, JSON.stringify(index, null, 2), 'utf-8');
+    } catch {}
   } catch {
     // already gone — that's fine
   }
@@ -103,6 +135,51 @@ export async function renameSession(id: string, title: string): Promise<void> {
 }
 
 /**
+ * Truncates a session to remove the last turn(s) for retry/editing (API-6).
+ */
+export async function truncateSession(id: string, messageIndex?: number): Promise<SessionFile | null> {
+  const session = await loadSession(id);
+  if (!session) return null;
+
+  const targetIndex = typeof messageIndex === 'number' ? messageIndex : Math.max(0, session.messages.length - 2);
+  session.messages = session.messages.slice(0, targetIndex);
+  await fs.writeFile(getSessionPath(id), JSON.stringify(session, null, 2), 'utf-8');
+  await updateSessionIndex({
+    id,
+    provider: session.provider,
+    model: session.model,
+    createdAt: session.createdAt,
+    turns: session.messages.filter((m) => m.role === 'user').length,
+  });
+  return session;
+}
+
+/**
+ * Single-writer cross-process lock (P-6).
+ * Uses .locus.lock with PID tracking to avoid concurrent write races.
+ */
+export async function withSessionLock<T>(fn: () => Promise<T>): Promise<T> {
+  const lockFile = path.join(getConfigDir(), '.locus.lock');
+  for (let i = 0; i < 10; i++) {
+    try {
+      await fs.writeFile(lockFile, String(process.pid), { flag: 'wx' });
+      break;
+    } catch {
+      if (i === 9) {
+        try { await fs.unlink(lockFile); } catch {}
+      } else {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+    }
+  }
+  try {
+    return await fn();
+  } finally {
+    try { await fs.unlink(lockFile); } catch {}
+  }
+}
+
+/**
  * Returns all saved session IDs sorted by most recent first.
  */
 export async function listSessions(): Promise<string[]> {
@@ -110,7 +187,7 @@ export async function listSessions(): Promise<string[]> {
     const dir = getHistoryDir();
     const files = await fs.readdir(dir);
     return files
-      .filter(f => f.endsWith('.json'))
+      .filter(f => f.endsWith('.json') && f !== 'sessions_index.json')
       .map(f => f.replace('.json', ''))
       .sort()
       .reverse();
@@ -133,6 +210,12 @@ export interface SessionSummary {
  * Does not load full message content, just enough for display.
  */
 export async function listSessionsDetail(): Promise<SessionSummary[]> {
+  try {
+    const indexPath = getIndexPath();
+    const raw = await fs.readFile(indexPath, 'utf-8');
+    return JSON.parse(raw) as SessionSummary[];
+  } catch {}
+
   const ids = await listSessions();
   const results = await Promise.allSettled(
     ids.map(async (id): Promise<SessionSummary> => {
@@ -148,7 +231,14 @@ export async function listSessionsDetail(): Promise<SessionSummary[]> {
       };
     })
   );
-  return results
+  const list = results
     .filter((r): r is PromiseFulfilledResult<SessionSummary> => r.status === 'fulfilled')
     .map((r) => r.value);
+
+  // Write cached index for next time (P-5)
+  try {
+    await fs.writeFile(getIndexPath(), JSON.stringify(list, null, 2), 'utf-8');
+  } catch {}
+
+  return list;
 }

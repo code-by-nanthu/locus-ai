@@ -1,0 +1,44 @@
+name: Release Automation (D-4)
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  release:
+    name: Build and Release Assets
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build Locus
+        run: pnpm build
+
+      - name: Package Dist Archive
+        run: |
+          tar -czvf locus-${{ github.ref_name }}.tar.gz dist/ package.json LICENSE README.md scripts/
+          sha256sum locus-${{ github.ref_name }}.tar.gz > locus-${{ github.ref_name }}.sha256
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            locus-${{ github.ref_name }}.tar.gz
+            locus-${{ github.ref_name }}.sha256
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
