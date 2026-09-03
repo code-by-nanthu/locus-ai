@@ -11,6 +11,7 @@ import { getLocalClient, fetchLocalModels } from '../../services/llm.js';
 import { generateSessionId, saveSession, listSessionsDetail, loadSession, deleteSession, renameSession, truncateSession } from '../../core/session.js';
 import { runAgentLoop, fetchPromptSuggestions, PendingApprovalEntry } from '../../services/agent.js';
 import { FALLBACK_SUGGESTIONS, DEFAULT_UI_PORT } from '../../core/constants.js';
+import { EMBEDDED_WEB_ASSETS } from './webAssets.js';
 
 /** Checks if a port is available on 127.0.0.1, incrementing if busy */
 async function findAvailablePort(startPort: number, maxAttempts = 10): Promise<number> {
@@ -79,8 +80,34 @@ export async function runUiCommand(options?: { port?: number }) {
     next();
   });
 
-  const webDir = path.join(__dirname, '..', '..', 'web');
-  app.use(express.static(webDir));
+  // Serve web dashboard UI from embedded memory assets (with SPA routing and disk fallback)
+  app.use((req, res, next) => {
+    if (req.path.startsWith('/api')) return next();
+
+    let assetPath = req.path === '/' ? '/index.html' : req.path;
+    let asset = EMBEDDED_WEB_ASSETS[assetPath];
+
+    // Single Page App (SPA) fallback: serve index.html for non-asset routes
+    if (!asset && !path.extname(req.path)) {
+      asset = EMBEDDED_WEB_ASSETS['/index.html'];
+    }
+
+    if (asset) {
+      res.setHeader('Content-Type', asset.contentType);
+      if (asset.isBase64) {
+        res.send(Buffer.from(asset.content, 'base64'));
+      } else {
+        res.send(asset.content);
+      }
+      return;
+    }
+
+    // Secondary disk fallback if running directly from source directory
+    const diskPath = path.join(__dirname, '..', '..', 'web', req.path === '/' ? 'index.html' : req.path);
+    res.sendFile(diskPath, (err) => {
+      if (err) next();
+    });
+  });
 
   // Map to hold pending approvals: authId -> PendingApprovalEntry
   const pendingApprovals = new Map<string, PendingApprovalEntry>();
