@@ -46,15 +46,19 @@
 
 Install the standalone native executable directly without requiring Node.js or pnpm:
 
+**macOS & Linux (Terminal):**
 ```bash
 curl -fsSL https://raw.githubusercontent.com/code-by-nanthu/locus-ai/main/scripts/install.sh | bash
 ```
 
-To uninstall:
-
-```bash
-locus-installer --uninstall  # or ./scripts/install.sh --uninstall
+**Windows (PowerShell):**
+```powershell
+irm https://raw.githubusercontent.com/code-by-nanthu/locus-ai/main/scripts/install.ps1 | iex
 ```
+
+To uninstall:
+- On macOS/Linux: `./scripts/install.sh --uninstall`
+- On Windows: `.\scripts\install.ps1 -Uninstall`
 
 ### Option 2: From Source via pnpm
 
