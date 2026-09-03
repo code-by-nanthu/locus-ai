@@ -3,6 +3,7 @@ node_modules/
 
 # Compiled Output
 dist/
+bin/
 
 # Logs
 npm-debug.log*

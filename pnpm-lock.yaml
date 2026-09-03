@@ -31,16 +31,16 @@ importers:
         version: 3.0.0
       ink:
         specifier: ^7.1.1
-        version: 7.1.1(@types/react@19.2.18)(react@19.2.8)
+        version: 7.1.1(@types/react@19.2.18)(react-devtools-core@7.0.1)(react@19.2.8)
       ink-select-input:
         specifier: ^6.2.0
-        version: 6.2.0(ink@7.1.1(@types/react@19.2.18)(react@19.2.8))(react@19.2.8)
+        version: 6.2.0(ink@7.1.1(@types/react@19.2.18)(react-devtools-core@7.0.1)(react@19.2.8))(react@19.2.8)
       ink-spinner:
         specifier: ^5.0.0
-        version: 5.0.0(ink@7.1.1(@types/react@19.2.18)(react@19.2.8))(react@19.2.8)
+        version: 5.0.0(ink@7.1.1(@types/react@19.2.18)(react-devtools-core@7.0.1)(react@19.2.8))(react@19.2.8)
       ink-text-input:
         specifier: ^6.0.0
-        version: 6.0.0(ink@7.1.1(@types/react@19.2.18)(react@19.2.8))(react@19.2.8)
+        version: 6.0.0(ink@7.1.1(@types/react@19.2.18)(react-devtools-core@7.0.1)(react@19.2.8))(react@19.2.8)
       lucide-react:
         specifier: ^1.38.0
         version: 1.38.0(react@19.2.8)
@@ -87,6 +87,9 @@ importers:
       '@vitejs/plugin-react':
         specifier: ^6.1.1
         version: 6.1.1(vite@8.2.2(@types/node@26.4.0)(jiti@2.7.0))
+      react-devtools-core:
+        specifier: ^7.0.1
+        version: 7.0.1
       typescript:
         specifier: ^7.0.2
         version: 7.0.2
@@ -1375,6 +1378,9 @@ packages:
     resolution: {integrity: sha512-K5zQjDllxWkf7Z5xJdV0/B0WTNqx6vxG70zJE4N0kBs4LovmEYWJzQGxC9bS9RAKu3bgM40lrd5zoLJ12MQ5BA==}
     engines: {node: '>= 0.10'}
 
+  react-devtools-core@7.0.1:
+    resolution: {integrity: sha512-C3yNvRHaizlpiASzy7b9vbnBGLrhvdhl1CbdU6EnZgxPNbai60szdLtl+VL76UNOt5bOoVTOz5rNWZxgGt+Gsw==}
+
   react-dom@19.2.8:
     resolution: {integrity: sha512-rVprimfGBG3DR+Tq0IQG2DT5PxKth1WIGDmj5yPmlzr4YBe7uyE+Du4oVqTDXZSHGGGXRtTJEGSSePyQCMBglQ==}
     peerDependencies:
@@ -1435,6 +1441,10 @@ packages:
 
   setprototypeof@1.2.0:
     resolution: {integrity: sha512-E5LDX7Wrp85Kil5bhZv46j8jOeboKq5JMmYM3gVGdGH8xFpPWXUMsNrlODCrkoxMEeNi/XZIwuRvY4XNwYMJpw==}
+
+  shell-quote@1.10.0:
+    resolution: {integrity: sha512-w1aiOKwKuRgtwAReIIj89puqg+I7GvX4IbLrvmhXbzQsj1+Zwi4VO3+fa6ZF91TWSjIxoEkKnMeHcLEODK5ZXA==}
+    engines: {node: '>= 0.4'}
 
   side-channel-list@1.0.1:
     resolution: {integrity: sha512-mjn/0bi/oUURjc5Xl7IaWi/OJJJumuoJFQJfDDyO46+hBWsfaVM65TBHq2eoZBhzl9EchxOijpkbRC8SVBQU0w==}
@@ -1655,6 +1665,18 @@ packages:
 
   wrappy@1.0.2:
     resolution: {integrity: sha512-l4Sp/DRseor9wL6EvV2+TuQn63dMkPjZ/sp9XkghTEbV9KlPS1xUsZ3u7/IQO4wxtcFB4bgpQPRcR3QCvezPcQ==}
+
+  ws@7.5.13:
+    resolution: {integrity: sha512-rsKI6xDBFVf4r/x8XyChGK04QR/XHroxs/jUcoWvtEZM8TPU/X/uIY9B1CsSzYws9ZJb/6bbBu7dPhFW00CAoA==}
+    engines: {node: '>=8.3.0'}
+    peerDependencies:
+      bufferutil: ^4.0.1
+      utf-8-validate: ^5.0.2
+    peerDependenciesMeta:
+      bufferutil:
+        optional: true
+      utf-8-validate:
+        optional: true
 
   ws@8.21.3:
     resolution: {integrity: sha512-201TZ/kPWxoPr/OKWjquZR1SWKXcvxdH+e1xrx89b3YbmzLMFCLfnaG1HFIgWzJOEWZ7MvpK++odZufgYR50Rw==}
@@ -2310,27 +2332,27 @@ snapshots:
 
   inherits@2.0.4: {}
 
-  ink-select-input@6.2.0(ink@7.1.1(@types/react@19.2.18)(react@19.2.8))(react@19.2.8):
+  ink-select-input@6.2.0(ink@7.1.1(@types/react@19.2.18)(react-devtools-core@7.0.1)(react@19.2.8))(react@19.2.8):
     dependencies:
       figures: 6.1.0
-      ink: 7.1.1(@types/react@19.2.18)(react@19.2.8)
+      ink: 7.1.1(@types/react@19.2.18)(react-devtools-core@7.0.1)(react@19.2.8)
       react: 19.2.8
       to-rotated: 1.0.0
 
-  ink-spinner@5.0.0(ink@7.1.1(@types/react@19.2.18)(react@19.2.8))(react@19.2.8):
+  ink-spinner@5.0.0(ink@7.1.1(@types/react@19.2.18)(react-devtools-core@7.0.1)(react@19.2.8))(react@19.2.8):
     dependencies:
       cli-spinners: 2.9.2
-      ink: 7.1.1(@types/react@19.2.18)(react@19.2.8)
+      ink: 7.1.1(@types/react@19.2.18)(react-devtools-core@7.0.1)(react@19.2.8)
       react: 19.2.8
 
-  ink-text-input@6.0.0(ink@7.1.1(@types/react@19.2.18)(react@19.2.8))(react@19.2.8):
+  ink-text-input@6.0.0(ink@7.1.1(@types/react@19.2.18)(react-devtools-core@7.0.1)(react@19.2.8))(react@19.2.8):
     dependencies:
       chalk: 5.6.2
-      ink: 7.1.1(@types/react@19.2.18)(react@19.2.8)
+      ink: 7.1.1(@types/react@19.2.18)(react-devtools-core@7.0.1)(react@19.2.8)
       react: 19.2.8
       type-fest: 4.41.0
 
-  ink@7.1.1(@types/react@19.2.18)(react@19.2.8):
+  ink@7.1.1(@types/react@19.2.18)(react-devtools-core@7.0.1)(react@19.2.8):
     dependencies:
       '@alcalzone/ansi-tokenize': 0.3.0
       ansi-escapes: 7.3.0
@@ -2360,6 +2382,7 @@ snapshots:
       yoga-layout: 3.2.1
     optionalDependencies:
       '@types/react': 19.2.18
+      react-devtools-core: 7.0.1
     transitivePeerDependencies:
       - bufferutil
       - utf-8-validate
@@ -2871,6 +2894,14 @@ snapshots:
       iconv-lite: 0.7.3
       unpipe: 1.0.0
 
+  react-devtools-core@7.0.1:
+    dependencies:
+      shell-quote: 1.10.0
+      ws: 7.5.13
+    transitivePeerDependencies:
+      - bufferutil
+      - utf-8-validate
+
   react-dom@19.2.8(react@19.2.8):
     dependencies:
       react: 19.2.8
@@ -2986,6 +3017,8 @@ snapshots:
       - supports-color
 
   setprototypeof@1.2.0: {}
+
+  shell-quote@1.10.0: {}
 
   side-channel-list@1.0.1:
     dependencies:
@@ -3198,6 +3231,8 @@ snapshots:
       string-width: 8.2.2
 
   wrappy@1.0.2: {}
+
+  ws@7.5.13: {}
 
   ws@8.21.3: {}
 

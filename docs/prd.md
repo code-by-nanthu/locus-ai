@@ -35,25 +35,20 @@ To evolve Locus into a truly standalone, industrial-grade application (comparabl
 * **`locus commit`:** Analyzes git diffs (staged or unstaged) and generates conventional commit messages directly from your local LLM.
 * **`locus export [id]`:** Exports conversational session transcripts into formatted markdown documents.
 * **`locus sessions`:** Formatted terminal overview of all previous sessions with quick resume instructions.
+* **`locus eval`:** Runs the automated agent task benchmark evaluation harness against fixture repositories.
 * **`locus ui`:** Launches the local Web UI dashboard server and automatically opens it in the default browser.
+
+### 2.6 Zero-Dependency Distribution
+
+* **Single Binary Compilation (`pnpm run build:binary`):** Compiles the full TypeScript CLI, React Ink UI, Express server, and all bundled dependencies into a single, self-contained native executable binary (`bin/locus` — 64 MB Mach-O arm64 on macOS, ELF x64 on Linux) with zero external runtime dependencies.
+* **Global Installer Script (`scripts/install.sh`):** Standard curl-to-sh install script (`curl -fsSL https://... | bash`) featuring automatic OS/arch detection, precompiled binary download, checksum verification, and `--uninstall` support without requiring Node.js.
+* **Automated CI/CD Release Pipeline (`.github/workflows/release.yml`):** Multi-platform matrix compiling native standalone binaries for macOS arm64 and Linux x64 with SHA-256 manifests on every release tag.
 
 ## 3. Target Features (Roadmap)
 
-### 3.1 Zero-Dependency Distribution
+### 3.1 Advanced Context & Discovery Tools
 
-* **Single Binary Compilation:** Compile the TypeScript/React codebase into a single, self-contained native executable binary (e.g., `locus-macos`, `locus-linux`, `locus.exe`) using tools like `pkg` or `bun`.
-* **Global Installer Script:** Provide a standard curl-to-sh install script (`curl -fsSL https://... | sh`).
-
-### 3.2 Advanced Context & Discovery Tools
-
-* **Vector Embeddings Index (RAG):** Integrate a tiny local embedding database (such as a native JS vector store or SQLite-vec) to vectorize the workspace for fast semantic searching across thousands of source files.
-* **Intelligent File Token Budgeting & Compaction:** Build an automatic system token counter and context compaction/eviction to prevent context window blowouts on local models.
-* **Diff-Based File Editing:** Provide fine-grained search-and-replace / unified diff editing to avoid full-file rewrites.
-
-### 3.3 Enterprise-Grade Security & Sandboxing
-
-* **Host Header & Loopback Token Authentication:** Secure the local web dashboard against DNS rebinding and local port sniffing.
-* **System Environment Sandbox:** Execute all `run_command` actions inside an isolated local container (like Docker) or an ephemeral shell environment.
+* **Vector Embeddings Index (RAG):** Optional local embedding plugin to vectorize large workspaces for semantic searching when lexical and symbol search (`search_workspace`, `find_symbol`) require supplementary retrieval.
 
 ## 4. Implementation Roadmap
 

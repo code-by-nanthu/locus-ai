@@ -7,6 +7,7 @@
   "scripts": {
     "build:web": "vite build -c vite.web.config.ts",
     "build": "pnpm build:web && tsc",
+    "build:binary": "export PATH=\"$HOME/.bun/bin:$PATH\" && bun build --compile src/index.tsx --outfile bin/locus --external playwright --external chromium-bidi",
     "lint": "tsc --noEmit",
     "test": "pnpm build && node --test dist/test/*.test.js",
     "start": "pnpm build && node ./dist/index.js"
@@ -44,6 +45,7 @@
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.5",
     "@vitejs/plugin-react": "^6.1.1",
+    "react-devtools-core": "^7.0.1",
     "typescript": "^7.0.2",
     "vite": "^8.2.2"
   }
