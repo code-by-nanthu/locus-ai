@@ -18,10 +18,10 @@ Locus is built on a strict zero-telemetry policy:
 ## 2. Threat Boundaries
 
 ### Boundary 1: Web UI & Browser Loopback (`S-1`, `S-2`)
-- **Threat:** Malicious web pages running in a user's browser attempting DNS rebinding or cross-origin attacks against the local Locus Express server (`http://localhost:3000`).
+- **Threat:** Malicious web pages running in a user's browser attempting DNS rebinding or cross-origin attacks against the local Locus Express server (`http://localhost:7331`).
 - **Mitigation:**
-  1. **`Host` Header Whitelist (`S-2`):** Every incoming request is strictly checked against loopback addresses (`localhost`, `127.0.0.1`, `[::1]`). Requests with malicious hostnames are rejected with HTTP 403.
-  2. **Loopback Bearer Token (`S-1`):** Every server boot generates a cryptographically random 24-byte bearer token (`bearerToken`). All `/api/*` requests require `Authorization: Bearer <token>` or `?token=`. Unauthenticated requests are rejected with HTTP 401.
+  1. **`Host` Header Whitelist (`S-2`):** Every incoming request is strictly checked against loopback addresses (`localhost:7331`, `127.0.0.1:7331`, `[::1]:7331`). Requests with malicious hostnames are rejected with HTTP 421 Misdirected Request.
+  2. **Loopback Bearer Token (`S-1`):** Every server boot loads or generates a cryptographically secure 24-byte bearer token (`bearerToken`). All `/api/*` requests require `Authorization: Bearer <token>` or `?token=`. Unauthenticated requests are rejected with HTTP 401.
 
 ### Boundary 2: Approval Tokens & Guarded Actions (`S-5`, `S-6`, `S-7`)
 - **Threat:** An agent hallucinates destructive shell commands or file rewrites without operator consent, or approval tokens are intercepted or reused.

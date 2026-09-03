@@ -106,7 +106,7 @@ pnpm run build:binary
 | Command | Description |
 | :--- | :--- |
 | `locus` | Launch the interactive React Ink terminal assistant |
-| `locus ui` | Launch the modern browser-based Web UI with loopback security |
+| `locus ui [--port <port>]` | Launch browser Web UI on port 7331 (with automatic port conflict fallback) |
 | `locus eval` | Run the automated agent benchmark evaluation harness against fixture projects |
 | `locus diff` | View git diff statistics and modified file details for the project |
 | `locus commit` | Analyze staged git changes and generate Conventional Commit messages |

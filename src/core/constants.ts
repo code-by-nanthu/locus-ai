@@ -42,3 +42,7 @@ export const PROVIDER_LABELS: Record<string, string> = {
   llamacpp:  'Llama.cpp',
   oobabooga: 'Oobabooga',
 };
+
+/** Dedicated unique port for the local Locus Web UI (avoids port 3000 collisions) */
+export const DEFAULT_UI_PORT = 7331;
+

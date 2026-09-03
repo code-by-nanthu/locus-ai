@@ -166,7 +166,7 @@ Usage:
 
 Subcommands:
   (none)                  Launch the interactive terminal assistant (React Ink UI)
-  ui                      Launch the browser-based Web UI with loopback security
+  ui [--port <port>]      Launch browser Web UI (default port: 7331, with auto-fallback)
   eval                    Run agent evaluation benchmark harness against fixture repos
   diff                    Inspect git working tree modifications and diff statistics
   commit                  Generate Conventional Commit message from staged changes
@@ -248,9 +248,14 @@ Options:
     process.exit(res.exitCode ?? 0);
   }
 
-  // ── locus ui ───────────────────────────────────────────────────────────────
+  // ── locus ui [--port <port>] ───────────────────────────────────────────────
   if (args[0] === 'ui') {
-    await runUiCommand();
+    let customPort: number | undefined;
+    const portIdx = args.indexOf('--port');
+    if (portIdx !== -1 && args[portIdx + 1]) {
+      customPort = Number(args[portIdx + 1]);
+    }
+    await runUiCommand({ port: customPort });
     return;
   }
 

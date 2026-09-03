@@ -76,7 +76,7 @@ To keep the security boundaries simple and dependable, Locus explicitly declares
 ## 6. Threat Model (DOC-3)
 
 See [threat-model.md](./threat-model.md) for full architectural analysis. Adversaries considered:
-1. **Malicious Browser Web Pages:** Attempting DNS rebinding or CSRF against `localhost:3000` (Mitigated via SEC-1 bearer auth token and SEC-2 `421` Host header enforcement).
+1. **Malicious Browser Web Pages:** Attempting DNS rebinding or CSRF against `localhost:7331` (Mitigated via SEC-1 bearer auth token and SEC-2 `421` Host header enforcement).
 2. **Prompt-Injected Files in Workspaces:** Malicious instructions hidden inside `README.md` or git diffs (Mitigated via `[SECURITY POLICY]` tagging tool output as untrusted external data).
 3. **Confused Local Models:** Small models hallucinating dangerous command invocations (Mitigated via human-in-the-loop approval gate with strict pattern matching).
 4. **Local Process Eavesdropping:** Other local users reading config files (Mitigated via restrictive directory permissions and credential redaction).

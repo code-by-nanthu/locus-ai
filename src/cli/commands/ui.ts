@@ -2,6 +2,7 @@ import express from 'express';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as crypto from 'crypto';
+import * as net from 'net';
 import open from 'open';
 import { execa } from 'execa';
 import { fileURLToPath } from 'url';
@@ -9,12 +10,28 @@ import { loadConfig, saveConfig, LocusConfig, getConfigDir } from '../../core/co
 import { getLocalClient, fetchLocalModels } from '../../services/llm.js';
 import { generateSessionId, saveSession, listSessionsDetail, loadSession, deleteSession, renameSession, truncateSession } from '../../core/session.js';
 import { runAgentLoop, fetchPromptSuggestions, PendingApprovalEntry } from '../../services/agent.js';
-import { FALLBACK_SUGGESTIONS } from '../../core/constants.js';
+import { FALLBACK_SUGGESTIONS, DEFAULT_UI_PORT } from '../../core/constants.js';
+
+/** Checks if a port is available on 127.0.0.1, incrementing if busy */
+async function findAvailablePort(startPort: number, maxAttempts = 10): Promise<number> {
+  for (let port = startPort; port < startPort + maxAttempts; port++) {
+    const isAvailable = await new Promise<boolean>((resolve) => {
+      const server = net.createServer();
+      server.unref();
+      server.on('error', () => resolve(false));
+      server.listen(port, '127.0.0.1', () => {
+        server.close(() => resolve(true));
+      });
+    });
+    if (isAvailable) return port;
+  }
+  return startPort;
+}
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-export async function runUiCommand() {
+export async function runUiCommand(options?: { port?: number }) {
   const config = await loadConfig();
   if (!config || !config.defaultProvider || !config.defaultModel) {
     console.error('Error: Default provider and model are not set. Start Locus once to configure them.');
@@ -24,7 +41,12 @@ export async function runUiCommand() {
   const app = express();
   app.use(express.json());
 
-  const PORT = Number(process.env.PORT || 3000);
+  const requestedPort = Number(options?.port || process.env.PORT || DEFAULT_UI_PORT);
+  const PORT = await findAvailablePort(requestedPort);
+  if (PORT !== requestedPort) {
+    console.log(`\n\x1b[33mPort ${requestedPort} is in use; automatically selected available port ${PORT}\x1b[0m`);
+  }
+
   const ALLOWED_HOSTS = new Set([`127.0.0.1:${PORT}`, `localhost:${PORT}`, `[::1]:${PORT}`, `127.0.0.1`, `localhost`, `[::1]`]);
 
   // SEC-2: DNS rebinding protection via Host header validation (421 Misdirected Request)
