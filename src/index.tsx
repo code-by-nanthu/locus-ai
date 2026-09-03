@@ -9,6 +9,7 @@ import { loadConfig, LocusConfig } from './core/config.js';
 import { runCommitCommand } from './cli/commands/commit.js';
 import { runExportCommand } from './cli/commands/export.js';
 import { runUiCommand } from './cli/commands/ui.js';
+import { runUpdateCommand } from './cli/commands/update.js';
 import type { Provider } from './services/llm.js';
 
 // ── Session resolution helper ─────────────────────────────────────────────────
@@ -172,6 +173,7 @@ Subcommands:
   commit                  Generate Conventional Commit message from staged changes
   export [id] [options]   Export session history to Markdown, JSON, or HTML
   sessions                List all saved conversations and session timestamps
+  update                  Check and install latest Locus release update
 
 Options:
   --session <id>          Resume a specific conversation session
@@ -259,6 +261,12 @@ Options:
     return;
   }
 
+  // ── locus update / upgrade ────────────────────────────────────────────────
+  if (args[0] === 'update' || args[0] === 'upgrade') {
+    await runUpdateCommand();
+    process.exit(0);
+  }
+
   const config = await loadConfig();
   const { history, provider, model, sessionId } = await resolveInitialSession(config, args);
 
@@ -273,4 +281,7 @@ Options:
   );
 }
 
-main();
+main().catch((err) => {
+  console.error(err);
+  process.exit(1);
+});

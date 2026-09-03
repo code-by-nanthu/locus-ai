@@ -115,6 +115,7 @@ pnpm run build:binary
 | `locus export [id]` | Export session to a formatted Markdown document |
 | `locus export [id] --format html` | Export session to a self-contained, styled HTML report |
 | `locus export [id] --format json` | Export full raw session conversation to JSON |
+| `locus update` | Check GitHub for new releases and upgrade Locus in-place |
 
 ---
 

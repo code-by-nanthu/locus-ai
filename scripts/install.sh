@@ -129,9 +129,11 @@ if [ ! -d "$DEST_DIR" ]; then
 fi
 
 if [ -w "$DEST_DIR" ]; then
+  rm -f "$DEST_DIR/$BINARY_NAME"
   cp "$SRC_BIN" "$DEST_DIR/$BINARY_NAME"
   chmod +x "$DEST_DIR/$BINARY_NAME"
 else
+  sudo rm -f "$DEST_DIR/$BINARY_NAME"
   sudo cp "$SRC_BIN" "$DEST_DIR/$BINARY_NAME"
   sudo chmod +x "$DEST_DIR/$BINARY_NAME"
 fi
