@@ -1,8 +1,9 @@
 import { execa } from 'execa';
+import { APP_VERSION } from '../../version.js';
 
 export async function runUpdateCommand(): Promise<void> {
   console.log('\n\x1b[36mChecking for Locus updates...\x1b[0m');
-  const currentVersion = '1.0.0';
+  const currentVersion = APP_VERSION;
 
   try {
     const controller = new AbortController();

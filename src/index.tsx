@@ -10,6 +10,7 @@ import { runCommitCommand } from './cli/commands/commit.js';
 import { runExportCommand } from './cli/commands/export.js';
 import { runUiCommand } from './cli/commands/ui.js';
 import { runUpdateCommand } from './cli/commands/update.js';
+import { APP_VERSION } from './version.js';
 import type { Provider } from './services/llm.js';
 
 // ── Session resolution helper ─────────────────────────────────────────────────
@@ -127,8 +128,8 @@ async function checkForUpdates(): Promise<void> {
     if (res.ok) {
       const release: any = await res.json();
       const latestTag = release.tag_name?.replace(/^v/, '');
-      if (latestTag && latestTag !== '1.0.0') {
-        console.log(`\n\x1b[33m💡 Update available: v1.0.0 → v${latestTag} (https://github.com/code-by-nanthu/locus-ai/releases)\x1b[0m\n`);
+      if (latestTag && latestTag !== APP_VERSION) {
+        console.log(`\n\x1b[33m💡 Update available: v${APP_VERSION} → v${latestTag} (https://github.com/code-by-nanthu/locus-ai/releases)\x1b[0m\n`);
       }
     }
   } catch {}
@@ -153,7 +154,7 @@ async function main() {
 
   // ── --version / -v ─────────────────────────────────────────────────────────
   if (args.includes('--version') || args.includes('-v')) {
-    console.log('locus v1.0.0');
+    console.log(`locus v${APP_VERSION}`);
     process.exit(0);
   }
 

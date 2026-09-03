@@ -11,6 +11,7 @@ import { getLocalClient, fetchLocalModels } from '../../services/llm.js';
 import { generateSessionId, saveSession, listSessionsDetail, loadSession, deleteSession, renameSession, truncateSession } from '../../core/session.js';
 import { runAgentLoop, fetchPromptSuggestions, PendingApprovalEntry } from '../../services/agent.js';
 import { FALLBACK_SUGGESTIONS, DEFAULT_UI_PORT } from '../../core/constants.js';
+import { APP_VERSION } from '../../version.js';
 import { EMBEDDED_WEB_ASSETS } from './webAssets.js';
 
 /** Checks if a port is available on 127.0.0.1, incrementing if busy */
@@ -207,11 +208,11 @@ export async function runUiCommand(options?: { port?: number }) {
   // ── Health & Version endpoints (API-8) ─────────────────────────────────────
 
   app.get('/api/health', (_req, res) => {
-    res.json({ status: 'ok', uptime: process.uptime(), version: '1.0.0' });
+    res.json({ status: 'ok', uptime: process.uptime(), version: APP_VERSION });
   });
 
   app.get('/api/version', (_req, res) => {
-    res.json({ name: 'locus', version: '1.0.0' });
+    res.json({ name: 'locus', version: APP_VERSION });
   });
 
   // ── Session Export endpoint (API-9) ────────────────────────────────────────
