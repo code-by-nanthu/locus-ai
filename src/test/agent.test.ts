@@ -27,7 +27,7 @@ describe('Agent Core Intelligence & Compaction Suite', () => {
     assert.strictEqual(shouldProvideTools([{ role: 'user', content: 'write a story and save it to story.txt' }]), true);
     assert.strictEqual(shouldProvideTools([{ role: 'user', content: 'write a script to parse data' }]), true);
 
-    // Active tool in history keeps tools enabled
+    // Active tool in history keeps tools enabled for follow-ups, but NOT for pure greetings
     assert.strictEqual(
       shouldProvideTools([
         { role: 'user', content: 'read file' },
@@ -35,6 +35,14 @@ describe('Agent Core Intelligence & Compaction Suite', () => {
         { role: 'user', content: 'thanks' },
       ]),
       true
+    );
+    assert.strictEqual(
+      shouldProvideTools([
+        { role: 'user', content: 'read file' },
+        { role: 'tool', tool_call_id: '1', content: 'ok' },
+        { role: 'user', content: 'hi' },
+      ]),
+      false
     );
   });
 
@@ -53,6 +61,13 @@ describe('Agent Core Intelligence & Compaction Suite', () => {
     assert.strictEqual(calls.length, 1);
     assert.strictEqual(calls[0].name, 'read_file');
     assert.strictEqual(calls[0].args.filePath, 'package.json');
+
+    // Handles malformed trailing parenthesis from small local models
+    const malformed = '{"name": "browser_action", "arguments": {"action": "click", "selector": "#gs_tsp"})';
+    const malformedCalls = parsePseudoToolCalls(malformed);
+    assert.strictEqual(malformedCalls.length, 1);
+    assert.strictEqual(malformedCalls[0].name, 'browser_action');
+    assert.strictEqual(malformedCalls[0].args.selector, '#gs_tsp');
   });
 
   it('compacts context by truncating older tool output (AG-7)', () => {

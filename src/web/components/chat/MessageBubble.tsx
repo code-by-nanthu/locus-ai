@@ -53,6 +53,7 @@ export function MessageBubble({ msg }: { msg: Message }) {
   }
 
   const cleanContent = unwrapToolJson(msg.content || '');
+  if (!cleanContent.trim()) return null;
 
   return (
     <div className="rise group flex gap-3 sm:gap-3.5">

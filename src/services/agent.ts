@@ -212,10 +212,24 @@ export function parsePseudoToolCalls(text: string): Array<{ name: string; args: 
   const results: Array<{ name: string; args: Record<string, any> }> = [];
   const knownTools = new Set(['read_file', 'write_file', 'run_command', 'search_workspace', 'browser_action']);
 
+  const sanitizeJson = (str: string): string => {
+    let s = str.trim();
+    while (s.endsWith(')') || s.endsWith(';')) {
+      s = s.slice(0, -1).trim();
+    }
+    const openCount = (s.match(/{/g) || []).length;
+    const closeCount = (s.match(/}/g) || []).length;
+    if (openCount > closeCount) {
+      s += '}'.repeat(openCount - closeCount);
+    }
+    return s;
+  };
+
   const lines = text.split('\n');
   for (const line of lines) {
-    const trimmed = line.trim();
-    if (!trimmed.startsWith('{') || !trimmed.endsWith('}')) continue;
+    let trimmed = line.trim();
+    if (!trimmed.startsWith('{')) continue;
+    trimmed = sanitizeJson(trimmed);
     try {
       const obj = JSON.parse(trimmed);
       if (obj.name) {
@@ -230,15 +244,19 @@ export function parsePseudoToolCalls(text: string): Array<{ name: string; args: 
   if (results.length === 0) {
     try {
       const startIdx = text.indexOf('{');
-      const endIdx = text.lastIndexOf('}');
-      if (startIdx !== -1 && endIdx !== -1) {
-        const jsonStr = text.substring(startIdx, endIdx + 1);
-        const obj = JSON.parse(jsonStr);
-        if (obj.name) {
-          const raw = obj.parameters ?? obj.arguments ?? obj.input ?? obj.args ?? {};
-          const args = typeof raw === 'string' ? JSON.parse(raw) : raw;
-          const matched = [...knownTools].find((t) => obj.name === t || obj.name.includes(t));
-          if (matched) results.push({ name: matched, args });
+      if (startIdx !== -1) {
+        let jsonStr = text.substring(startIdx);
+        jsonStr = sanitizeJson(jsonStr);
+        const lastBrace = jsonStr.lastIndexOf('}');
+        if (lastBrace !== -1) {
+          jsonStr = jsonStr.substring(0, lastBrace + 1);
+          const obj = JSON.parse(jsonStr);
+          if (obj.name) {
+            const raw = obj.parameters ?? obj.arguments ?? obj.input ?? obj.args ?? {};
+            const args = typeof raw === 'string' ? JSON.parse(raw) : raw;
+            const matched = [...knownTools].find((t) => obj.name === t || obj.name.includes(t));
+            if (matched) results.push({ name: matched, args });
+          }
         }
       }
     } catch {}
@@ -286,17 +304,11 @@ export function extractContentFromHallucinatedToolJson(raw: string): string | nu
  * or hallucinate pseudo-tools like "write_code" during creative writing prompts.
  */
 export function shouldProvideTools(messages: any[]): boolean {
-  // If there are already active tool interactions in history, keep tools enabled
-  const hasActiveTools = messages.some(
-    (m) => m.role === 'tool' || (m.tool_calls && m.tool_calls.length > 0)
-  );
-  if (hasActiveTools) return true;
-
   // Inspect the most recent user prompt
   const lastUser = [...messages].reverse().find((m) => m.role === 'user');
   const text = (lastUser?.content || '').trim().toLowerCase();
 
-  // 1. Explicit greeting or casual conversation: do not attach tools
+  // 1. Explicit greeting or casual conversation: NEVER attach tools (even if previous turns had tools)
   const GREETING_PATTERN = /^(hi|hello|hey|greetings|howdy|yo|sup|good (morning|afternoon|evening|day)|who are you|what can you do|help)(\s*|[!?.]*)$/i;
   if (GREETING_PATTERN.test(text)) {
     return false;
@@ -308,6 +320,12 @@ export function shouldProvideTools(messages: any[]): boolean {
   if (CREATIVE_PATTERN.test(text) && !HAS_FILE_TARGET.test(text)) {
     return false;
   }
+
+  // If there are active tool interactions in history and the prompt is not a greeting, keep tools enabled
+  const hasActiveTools = messages.some(
+    (m) => m.role === 'tool' || (m.tool_calls && m.tool_calls.length > 0)
+  );
+  if (hasActiveTools) return true;
 
   // 3. Technical, workspace, code, or command intent: provide tools
   const TOOL_INTENT_PATTERN = /\b(read|edit|replace|patch|diff|run|exec|terminal|command|test|install|build|npm|yarn|pnpm|git|search|find|grep|scan|browse|browser|url|http|save)\b|(\bwrite\b.*\b(file|code|script|test|component|function|readme)\b)|(\b(file|folder|dir|repo|workspace)\b)|\.[a-z0-9]{2,4}/i;
@@ -626,10 +644,24 @@ export async function runAgentLoop(
     }
 
     // Parallel/Batched Tool Execution
-    // 1. Record assistant message with tool_calls in history
+    // Strip pseudo-tool call JSON from visible text content so it doesn't pollute chat history or model context
+    let visibleTextContent = (fullContent || '').trim();
+    for (const tc of toolCallsToRun) {
+      if (visibleTextContent.includes(tc.name)) {
+        visibleTextContent = visibleTextContent
+          .split('\n')
+          .filter((line) => {
+            const trimmed = line.trim();
+            return !trimmed.includes(tc.name) && !trimmed.startsWith('{') && !trimmed.endsWith('}');
+          })
+          .join('\n')
+          .trim();
+      }
+    }
+
     currentHistory.push({
       role: 'assistant',
-      content: fullContent || null,
+      content: visibleTextContent || null,
       tool_calls: toolCallsToRun.map((tc) => ({
         id: tc.id,
         type: 'function',

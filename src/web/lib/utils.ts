@@ -81,6 +81,8 @@ export function unwrapToolJson(raw: string): string {
           }
           return c;
         }
+        // If it's a pure tool invocation without user prose, return empty string so it doesn't pollute the UI
+        return '';
       }
     }
   } catch {}
