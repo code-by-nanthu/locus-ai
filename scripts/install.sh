@@ -2,7 +2,17 @@
 # Locus Zero-Dependency Universal Installer (PRD §3.1 / DIST-4)
 set -e
 
-INSTALL_DIR="${INSTALL_DIR:-/usr/local/bin}"
+# Default install directory: /usr/local/bin if writable, otherwise ~/.local/bin (avoids sudo prompt in pipes)
+if [ -n "$INSTALL_DIR" ]; then
+  DEST_DIR="$INSTALL_DIR"
+elif [ -w "/usr/local/bin" ]; then
+  DEST_DIR="/usr/local/bin"
+elif [ -t 0 ] && command -v sudo >/dev/null 2>&1; then
+  DEST_DIR="/usr/local/bin"
+else
+  DEST_DIR="$HOME/.local/bin"
+fi
+
 BINARY_NAME="locus"
 REPO="code-by-nanthu/locus-ai"
 
@@ -11,10 +21,14 @@ echo "=== Locus AI Zero-Dependency Installer ==="
 # Handle uninstall flag
 if [ "$1" = "--uninstall" ]; then
   echo "Uninstalling Locus..."
-  if [ -w "$INSTALL_DIR" ]; then
-    rm -f "$INSTALL_DIR/$BINARY_NAME"
-  else
-    sudo rm -f "$INSTALL_DIR/$BINARY_NAME"
+  if [ -f "$DEST_DIR/$BINARY_NAME" ]; then
+    if [ -w "$DEST_DIR" ]; then
+      rm -f "$DEST_DIR/$BINARY_NAME"
+    else
+      sudo rm -f "$DEST_DIR/$BINARY_NAME"
+    fi
+  elif [ -f "$HOME/.local/bin/$BINARY_NAME" ]; then
+    rm -f "$HOME/.local/bin/$BINARY_NAME"
   fi
   echo "Locus successfully uninstalled."
   exit 0
@@ -38,46 +52,84 @@ esac
 
 echo "Detected platform: $TARGET_OS ($TARGET_ARCH)"
 
-# If building or installing from local repository
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-LOCAL_BIN="$SCRIPT_DIR/../bin/locus"
+TMP_DIR="$(mktemp -d /tmp/locus-install.XXXXXX)"
+cleanup() {
+  rm -rf "$TMP_DIR"
+}
+trap cleanup EXIT
 
-if [ -f "$LOCAL_BIN" ]; then
-  echo "Found local compiled native binary: $LOCAL_BIN"
-  SRC_BIN="$LOCAL_BIN"
-else
-  # Download precompiled standalone native binary from GitHub Releases
-  DOWNLOAD_URL="https://github.com/$REPO/releases/latest/download/locus-$TARGET_OS-$TARGET_ARCH"
-  TMP_FILE="$(mktemp /tmp/locus-bin.XXXXXX)"
-  echo "Downloading standalone native binary from $DOWNLOAD_URL..."
-  if curl -fsSL "$DOWNLOAD_URL" -o "$TMP_FILE"; then
-    SRC_BIN="$TMP_FILE"
-  else
-    echo "Precompiled release binary not found online; building locally with bun..."
-    if ! command -v bun >/dev/null 2>&1; then
-      echo "Installing bun compiler..."
-      curl -fsSL https://bun.sh/install | bash
-      export PATH="$HOME/.bun/bin:$PATH"
-    fi
-    mkdir -p "$SCRIPT_DIR/../bin"
-    bun build --compile "$SCRIPT_DIR/../src/index.tsx" --outfile "$LOCAL_BIN" --external playwright --external chromium-bidi
-    SRC_BIN="$LOCAL_BIN"
+# 1. Check if local compiled binary already exists relative to script file
+SRC_BIN=""
+if [ -n "${BASH_SOURCE[0]}" ] && [ -f "${BASH_SOURCE[0]}" ]; then
+  SCRIPT_PARENT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." 2>/dev/null && pwd)"
+  if [ -f "$SCRIPT_PARENT/bin/locus" ]; then
+    SRC_BIN="$SCRIPT_PARENT/bin/locus"
   fi
 fi
 
-echo "Installing Locus standalone executable to $INSTALL_DIR/$BINARY_NAME..."
-if [ -w "$INSTALL_DIR" ]; then
-  cp "$SRC_BIN" "$INSTALL_DIR/$BINARY_NAME"
-  chmod +x "$INSTALL_DIR/$BINARY_NAME"
-else
-  sudo cp "$SRC_BIN" "$INSTALL_DIR/$BINARY_NAME"
-  sudo chmod +x "$INSTALL_DIR/$BINARY_NAME"
+# 2. If not found locally, try downloading precompiled release binary
+if [ -z "$SRC_BIN" ]; then
+  DOWNLOAD_URL="https://github.com/$REPO/releases/latest/download/locus-$TARGET_OS-$TARGET_ARCH"
+  TMP_BIN="$TMP_DIR/locus-downloaded"
+  echo "Checking for precompiled release binary from $DOWNLOAD_URL..."
+
+  if curl -fsSL "$DOWNLOAD_URL" -o "$TMP_BIN" 2>/dev/null; then
+    chmod +x "$TMP_BIN"
+    SRC_BIN="$TMP_BIN"
+  fi
 fi
 
-if [ -n "$TMP_FILE" ] && [ -f "$TMP_FILE" ]; then
-  rm -f "$TMP_FILE"
+# 3. If precompiled release binary is not found on GitHub, build from source
+if [ -z "$SRC_BIN" ]; then
+  echo "Precompiled release binary not yet published online; compiling from repository..."
+
+  # Ensure Bun is available
+  export PATH="$HOME/.bun/bin:$PATH"
+  if ! command -v bun >/dev/null 2>&1; then
+    echo "Installing Bun compiler for native compilation..."
+    curl -fsSL https://bun.sh/install | bash
+    export PATH="$HOME/.bun/bin:$PATH"
+  fi
+
+  # Determine source tree location
+  BUILD_DIR="$TMP_DIR/source"
+  if [ -f "./src/index.tsx" ]; then
+    echo "Using current directory source files..."
+    BUILD_DIR="$(pwd)"
+  elif [ -n "$SCRIPT_PARENT" ] && [ -f "$SCRIPT_PARENT/src/index.tsx" ]; then
+    echo "Using local repository files from $SCRIPT_PARENT..."
+    BUILD_DIR="$SCRIPT_PARENT"
+  else
+    echo "Cloning latest source from GitHub..."
+    git clone --depth 1 "https://github.com/$REPO.git" "$BUILD_DIR"
+  fi
+
+  COMPILED_BIN="$TMP_DIR/locus-compiled"
+  echo "Compiling self-contained native executable..."
+  (cd "$BUILD_DIR" && bun build --compile src/index.tsx --outfile "$COMPILED_BIN" --external playwright --external chromium-bidi)
+  chmod +x "$COMPILED_BIN"
+  SRC_BIN="$COMPILED_BIN"
+fi
+
+# 4. Install binary to target destination
+echo "Installing Locus executable to $DEST_DIR/$BINARY_NAME..."
+if [ ! -d "$DEST_DIR" ]; then
+  mkdir -p "$DEST_DIR" 2>/dev/null || sudo mkdir -p "$DEST_DIR"
+fi
+
+if [ -w "$DEST_DIR" ]; then
+  cp "$SRC_BIN" "$DEST_DIR/$BINARY_NAME"
+  chmod +x "$DEST_DIR/$BINARY_NAME"
+else
+  sudo cp "$SRC_BIN" "$DEST_DIR/$BINARY_NAME"
+  sudo chmod +x "$DEST_DIR/$BINARY_NAME"
 fi
 
 echo ""
-echo "✨ Locus installed successfully to $INSTALL_DIR/$BINARY_NAME!"
+echo "✨ Locus installed successfully to $DEST_DIR/$BINARY_NAME!"
+if [[ ":$PATH:" != *":$DEST_DIR:"* ]]; then
+  echo ""
+  echo "⚠️  Note: $DEST_DIR is not in your current PATH."
+  echo "   Add it with: echo 'export PATH=\"$DEST_DIR:\$PATH\"' >> ~/.zshrc"
+fi
 echo "Run 'locus --help' to get started."
