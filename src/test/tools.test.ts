@@ -95,7 +95,7 @@ describe('Security & Tool Execution Suite', () => {
   });
 
   it('executes run_command and returns exitCode with durationMs', async () => {
-    const raw = await executeTool('run_command', { command: 'echo "Locus Test"' });
+    const raw = await executeTool('run_command', { command: 'node -e "console.log(\'Locus Test\')"' });
     const res = JSON.parse(raw);
     assert.strictEqual(res.ok, true);
     assert.strictEqual(res.exitCode, 0);
@@ -113,7 +113,7 @@ describe('Security & Tool Execution Suite', () => {
   });
 
   it('redacts sensitive API keys and tokens from tool outputs (P-3)', async () => {
-    const raw = await executeTool('run_command', { command: 'echo "sk-123456789012345678901234567890"' });
+    const raw = await executeTool('run_command', { command: 'node -e "console.log(\'sk-123456789012345678901234567890\')"' });
     const res = JSON.parse(raw);
     assert.strictEqual(res.ok, true);
     assert.ok(!res.stdout.includes('sk-123456789012345678901234567890'));

@@ -414,7 +414,7 @@ export async function executeTool(name: string, args: any): Promise<string> {
       const data = await fs.readFile(safePath, 'utf-8');
 
       if (args.startLine !== undefined || args.endLine !== undefined) {
-        const lines = data.split('\n');
+        const lines = data.replace(/\r\n/g, '\n').split('\n');
         const start = Math.max(1, typeof args.startLine === 'number' ? args.startLine : 1);
         const end = Math.min(lines.length, typeof args.endLine === 'number' ? args.endLine : lines.length);
         const sliced = lines.slice(start - 1, end).join('\n');
